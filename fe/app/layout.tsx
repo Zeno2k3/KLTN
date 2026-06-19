@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Baloo_2, Nunito } from "next/font/google";
 import "./globals.css";
+import Providers from "./_providers/Providers";
 
 const baloo = Baloo_2({
   variable: "--font-baloo",
@@ -29,7 +30,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="vi" className={`${baloo.variable} ${nunito.variable}`}>
-      <body>{children}</body>
+      <body>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

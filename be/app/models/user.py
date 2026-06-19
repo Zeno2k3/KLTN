@@ -26,7 +26,16 @@ class User(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     # Hash bcrypt (~60 ký tự) — sinh qua app.core.security.hash_password, không hash trong model.
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Nullable: tài khoản đăng nhập bằng Google không có mật khẩu.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Nguồn đăng nhập: "local" (email + mật khẩu) hoặc "google".
+    auth_provider: Mapped[str] = mapped_column(
+        String(20), server_default=text("'local'"), nullable=False
+    )
+    # Định danh ổn định của tài khoản Google (claim "sub" trong ID token).
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True)
+    # Ảnh đại diện (lấy từ Google khi đăng nhập bằng Google).
+    avatar_url: Mapped[str | None] = mapped_column(String(512))
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default=text("true"), nullable=False
     )

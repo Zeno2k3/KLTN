@@ -36,7 +36,5 @@ class MessageEvaluation(CreatedAtMixin, Base):
     message: Mapped[Message] = relationship(back_populates="evaluations")
 
     __table_args__ = (
-        Index(
-            "ix_message_evaluations_message_id_metric", "message_id", "metric"
-        ),
+        Index("ix_message_evaluations_message_id_metric", "message_id", "metric"),
     )

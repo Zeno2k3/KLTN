@@ -2,14 +2,17 @@
 
 import AppHeader from "@/app/components/common/AppHeader";
 import LogoBadge from "@/app/components/common/LogoBadge";
+import UserMenu from "@/app/components/common/UserMenu";
 import { useChat } from "@/app/hooks/useChat";
 import { TOPICS } from "@/app/lib/data/chat";
+import { useAuth } from "@/app/_providers/AuthProvider";
 import ChatSidebar from "./_components/ChatSidebar";
 import ChatThread from "./_components/ChatThread";
 import Composer from "./_components/Composer";
 
 export default function ChatPage() {
-  const chat = useChat();
+  const { user } = useAuth();
+  const chat = useChat(user?.name);
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", fontFamily: "var(--font-body)", color: "var(--text-body)", background: "var(--ink-100)" }}>
@@ -22,6 +25,7 @@ export default function ChatPage() {
             Trợ lý tuyển sinh · trực tuyến
           </span>
         }
+        right={<UserMenu />}
       />
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>

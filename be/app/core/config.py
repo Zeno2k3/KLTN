@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
+    # Cookie (httpOnly cookie giữ access/refresh token)
+    cookie_secure: bool = False  # True khi chạy production qua HTTPS
+    cookie_samesite: str = "lax"  # dev cùng localhost: "lax"; prod khác domain: "none"
+    cookie_domain: str | None = None
+
+    # Google OAuth (đăng nhập bằng Google — xác thực ID token ở backend)
+    google_client_id: str = ""
+
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000"]
 

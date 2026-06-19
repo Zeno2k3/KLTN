@@ -1,17 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { StatCardData } from "@/app/types/admin";
 import { useDocuments } from "@/app/hooks/useDocuments";
+import { useAuth } from "@/app/_providers/AuthProvider";
 import AdminHeader from "./_components/AdminHeader";
 import AdminSidebar from "./_components/AdminSidebar";
 import DocsView from "./_components/DocsView";
 import StatsView from "./_components/StatsView";
 
 export default function AdminPage() {
+  const router = useRouter();
+  const { user, loading } = useAuth();
   const [tab, setTab] = useState<"stats" | "docs">("stats");
   const { docs, onPick, deleteDoc } = useDocuments();
   const isStats = tab === "stats";
+
+  // Chỉ admin mới vào được; backend cũng chặn các API admin (require_admin).
+  useEffect(() => {
+    if (loading) return;
+    if (!user) router.replace("/auth");
+    else if (user.role !== "admin") router.replace("/chat");
+  }, [loading, user, router]);
+
+  if (loading || !user || user.role !== "admin") {
+    return (
+      <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+        Đang tải…
+      </div>
+    );
+  }
 
   const stats: StatCardData[] = [
     { label: "Phụ huynh hoạt động", value: "2.847", delta: "+12%", icon: "users", tint: "var(--teal-50)", fg: "var(--brand)" },

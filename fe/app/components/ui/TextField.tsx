@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { ChangeEventHandler, CSSProperties, ReactNode } from "react";
 
 const inputStyle: CSSProperties = {
   height: 48,
@@ -21,14 +21,41 @@ interface TextFieldProps {
   name?: string;
   /** Style bổ sung cho phần label (vd hàng label có link "Quên mật khẩu?"). */
   labelStyle?: CSSProperties;
+  value?: string;
+  onChange?: ChangeEventHandler<HTMLInputElement>;
+  required?: boolean;
+  autoComplete?: string;
+  disabled?: boolean;
 }
 
 /** Ô nhập có nhãn (label + input), dùng cho form auth. */
-export default function TextField({ label, type = "text", placeholder, name, labelStyle }: TextFieldProps) {
+export default function TextField({
+  label,
+  type = "text",
+  placeholder,
+  name,
+  labelStyle,
+  value,
+  onChange,
+  required,
+  autoComplete,
+  disabled,
+}: TextFieldProps) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 7 }}>
       <span style={labelStyle ? { ...labelText, ...labelStyle } : labelText}>{label}</span>
-      <input className="az-input" type={type} placeholder={placeholder} name={name} style={inputStyle} />
+      <input
+        className="az-input"
+        type={type}
+        placeholder={placeholder}
+        name={name}
+        style={inputStyle}
+        value={value}
+        onChange={onChange}
+        required={required}
+        autoComplete={autoComplete}
+        disabled={disabled}
+      />
     </label>
   );
 }

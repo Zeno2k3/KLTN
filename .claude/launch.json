@@ -5,7 +5,8 @@
       "name": "fe-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "fe", "run", "dev"],
-      "port": 3000
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }

@@ -27,7 +27,9 @@ class MessageFeedback(CreatedAtMixin, Base):
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
-    rating: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 1 = like, -1 = dislike
+    rating: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False
+    )  # 1 = like, -1 = dislike
     comment: Mapped[str | None] = mapped_column(Text)
 
     message: Mapped[Message] = relationship(back_populates="feedback")

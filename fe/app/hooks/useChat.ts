@@ -6,7 +6,7 @@ import { DEFAULT_REPLY, SCRIPTED, SEED, USER_NAME } from "@/app/lib/data/chat";
 import { now, partOfDay } from "@/app/lib/time";
 
 /** Quản lý toàn bộ state & logic của giao diện chat. */
-export function useChat() {
+export function useChat(userName: string = USER_NAME) {
   const [convos, setConvos] = useState<Convo[]>(SEED);
   const [activeId, setActiveId] = useState("c1");
   const [text, setText] = useState("");
@@ -61,7 +61,7 @@ export function useChat() {
     setTyping(false);
   }
 
-  const greetingText = `Xin chào buổi ${partOfDay()}, ${USER_NAME} 👋`;
+  const greetingText = `Xin chào buổi ${partOfDay()}, ${userName} 👋`;
   const greetingSub = "Mình là LuminaAi — trợ lý tư vấn tuyển sinh lớp 1. Mình giúp gì cho bé nhà mình hôm nay ạ?";
 
   return {

@@ -43,16 +43,25 @@ Phân tầng rõ ràng — một request đi qua:
 routes/ (validate qua schema) → deps.py (DI: db session, auth) → services/ (business logic) → repositories/ (truy vấn DB) → models/ (ORM)
 ```
 
-- `app/core/` — `config.py` (settings từ `.env`), `database.py` (async engine/session), `security.py` (JWT + bcrypt).
-- `app/api/v1/routes/` — mỗi file = một nhóm endpoint; gộp tại `router.py`.
+- `app/core/` — `config.py` (settings từ `.env`), `database.py` (async engine/session), `security.py` (JWT + bcrypt), `redis.py` (blacklist token đăng xuất).
+- `app/api/v1/routes/` — mỗi file = một nhóm endpoint; gộp tại `router.py`. Nhóm `auth.py` xử lý đăng nhập/đăng ký/đăng xuất.
 - `app/models/` — schema đã dựng (9 bảng: `roles`/`users`, `conversations`/`messages`, `*_feedbacks`, `documents`/`document_chunks`, `message_evaluations`). Vector RAG ở **Weaviate Cloud**, đánh giá chất lượng bằng **RAGAS + Arize Phoenix**. Chi tiết: [be/CLAUDE.md](be/CLAUDE.md).
 - Đặt logic vào `services/`/`repositories/`, **không** để business logic trong route handler.
 
 ## Frontend (tóm tắt)
 
-- App Router; các trang hiện có: `/` (landing), `/auth`, `/chat`, `/admin`.
+- App Router; các trang hiện có: `/` (landing), `/auth`, `/chat`, `/admin`. `/chat` và `/admin` được bảo vệ qua `fe/proxy.ts`.
 - Alias path: `@/*` trỏ về gốc `fe/` (ví dụ `import x from "@/app/lib/..."`).
 - UI port từ thiết kế "Lumina" (xem memory [[lumina-design-source]]).
+
+## Xác thực & phân quyền (auth)
+
+Đăng nhập bằng **email/mật khẩu** *hoặc* **Google**; phiên giữ qua **httpOnly cookie**; phân quyền 2 vai trò `admin`/`user`.
+
+- **Token (httpOnly cookie):** BE cấp `access_token` (ngắn hạn) + `refresh_token` (dài hạn) đặt trong cookie httpOnly — **không** trả trong body. FE gọi API với `credentials: "include"`, tự refresh khi gặp 401. Đăng xuất thu hồi token qua **Redis blacklist** (theo claim `jti`).
+- **Google:** FE lấy access token (`useGoogleLogin`) → BE xác thực qua Google `tokeninfo` (kiểm `aud` == `GOOGLE_CLIENT_ID`) + `userinfo` rồi cấp JWT của hệ thống. `GOOGLE_CLIENT_ID` (be/.env) và `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (fe/.env.local) **phải trùng nhau**; Authorized JavaScript origin phải có `http://localhost:3000`.
+- **Phân quyền:** thực thi thật ở **BE** (`require_admin`); FE chặn route `/chat`,`/admin` bằng `fe/proxy.ts` (Next 16 đổi tên `middleware`→`proxy`) + gate client-side cho trang admin. Sau đăng nhập điều hướng theo vai trò: `admin → /admin`, `user → /chat`.
+- Chi tiết: backend ở [be/CLAUDE.md](be/CLAUDE.md), frontend ở [fe/CLAUDE.md](fe/CLAUDE.md).
 
 ## Môi trường & quy ước
 

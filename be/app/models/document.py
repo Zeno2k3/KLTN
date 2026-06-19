@@ -74,7 +74,9 @@ class DocumentChunk(CreatedAtMixin, Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    weaviate_uuid: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), unique=True)
+    weaviate_uuid: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), unique=True
+    )
     token_count: Mapped[int | None] = mapped_column(Integer)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
