@@ -3,9 +3,9 @@ import type { CSSProperties } from "react";
 type Tone = "brand" | "white";
 
 /**
- * LuminaAi mascot — a friendly teal robot.
- * `tone="brand"` → teal body with white features (use on light backgrounds).
- * `tone="white"` → white body with teal features (use on the brand background).
+ * LuminaAi mascot — chú robot teal thân thiện.
+ * `tone="brand"` → thân teal, chi tiết trắng (dùng trên nền sáng).
+ * `tone="white"` → thân trắng, chi tiết teal (dùng trên nền brand).
  */
 export default function LuminaLogo({
   size = 34,
