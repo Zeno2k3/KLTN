@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fe-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "fe", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}
