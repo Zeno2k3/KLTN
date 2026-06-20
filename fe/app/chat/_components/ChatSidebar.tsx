@@ -3,7 +3,6 @@
 import type { Convo } from "@/app/types/chat";
 import Icon from "@/app/components/ui/Icon";
 import ConversationItem from "./ConversationItem";
-import UserCard from "./UserCard";
 
 interface ChatSidebarProps {
   convos: Convo[];
@@ -30,7 +29,7 @@ export default function ChatSidebar({ convos, activeId, onOpen, onNew }: ChatSid
         ))}
       </div>
 
-      <UserCard />
+
     </aside>
   );
 }

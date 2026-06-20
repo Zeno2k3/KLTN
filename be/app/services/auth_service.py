@@ -6,7 +6,7 @@ Route chỉ validate input rồi gọi các hàm ở đây (theo kiến trúc ph
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import HTTPException, status
@@ -184,7 +184,7 @@ async def _blacklist_token(token: str) -> None:
     exp = payload.get("exp")
     if not jti or not exp:
         return
-    ttl = int(exp - datetime.now(timezone.utc).timestamp())
+    ttl = int(exp - datetime.now(UTC).timestamp())
     await blacklist_jti(jti, ttl)
 
 

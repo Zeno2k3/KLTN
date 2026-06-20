@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import bcrypt
@@ -38,7 +38,7 @@ def _create_token(
     - ``type``: ``access`` / ``refresh``.
     - ``jti``: id duy nhất của token, dùng để blacklist khi đăng xuất.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(subject),
         "role": role,

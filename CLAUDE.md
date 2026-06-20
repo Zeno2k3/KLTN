@@ -1,72 +1,52 @@
-# KLTN — Lumina
+# Dự án: Agent Tư vấn Tuyển sinh Tiểu học (RAG)
 
-Đồ án tốt nghiệp (KLTN): ứng dụng **chatbot RAG**. Monorepo gồm hai phần độc lập:
+Hệ thống hỏi-đáp RAG tư vấn tuyển sinh tiểu học cho phụ huynh.
 
-| Thư mục | Vai trò              | Stack                                                                                   | Tài liệu                     |
-| ------- | -------------------- | --------------------------------------------------------------------------------------- | ---------------------------- |
-| `be/`   | REST API backend     | FastAPI · Python 3.14 · SQLAlchemy 2 (async) · PostgreSQL · Redis · LlamaIndex + OpenAI | [be/README.md](be/README.md) |
-| `fe/`   | Giao diện người dùng | Next.js 16 · React 19 · TypeScript · Tailwind v4 (App Router)                           | [fe/README.md](fe/README.md) |
+## Kiến trúc
 
-Backend phục vụ frontend qua HTTP. FE chạy ở `http://localhost:3000`, BE ở `http://localhost:8000` (đã cấu hình sẵn CORS giữa hai bên).
+- Monorepo: `be/` (API + RAG pipeline), `fe/` (giao diện chat)
+- Backend: FastAPI · Python 3.14 · SQLModel + SQLAlchemy 2 (async, asyncpg) · Alembic
+  · Redis (async) · LlamaIndex Workflows + OpenAI · pip + venv
+- Frontend: Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4
+- Dữ liệu: PostgreSQL · Weaviate Cloud (vector store)
+- Quan sát: Arize Phoenix (tracing) + Sentry (lỗi runtime)
+- Đánh giá: RAGAS (faithfulness, answer relevancy, context precision/recall)
 
-## Đọc trước khi làm việc trong từng phần
+## Build & test (chạy để kiểm chứng — không bao giờ báo xong nếu chưa chạy)
 
-- **`be/`** — chi tiết kiến trúc, luồng request, lệnh chạy/migrate/test ở [be/CLAUDE.md](be/CLAUDE.md).
-- **`fe/`** — @fe/CLAUDE.md trước khi viết code FE. Quy ước thư mục & lệnh ở [fe/README.md](fe/README.md).
+- Backend (activate venv trước): cd be && ruff check . && python -m pytest -q
+- Frontend: cd fe && npm run lint && npx tsc --noEmit && CI=true npm test (test = vitest + jsdom)
 
-## Lệnh thường dùng
+## Quy tắc cứng (dữ kiện, không phải lời đề nghị)
 
-### Backend (`be/`)
+- Backend async toàn bộ: truy cập DB qua AsyncSession (`await session.exec(select(...))`); không gọi hàm chặn trong đường async.
+- Mọi thay đổi schema DB phải qua migration Alembic; không sửa DB thủ công.
+- Không bao giờ tuyên bố hoàn thành cho đến khi hook verify pass VÀ có bằng chứng.
+- Thay đổi retrieval / prompt / embedding phải chạy RAGAS eval trước khi coi là xong.
+- Mỗi cuộc gọi LLM/retrieval phải được trace qua Phoenix; không thêm đường gọi OpenAI "mù".
+- PII học sinh/phụ huynh: không ghi log, không gửi ra ngoài phạm vi cần thiết. Không log token JWT.
+- Bí mật (OPENAI*API_KEY, DATABASE_URL, WEAVIATE*\*, SENTRY_DSN) chỉ qua biến môi trường; không hardcode.
+- Mỗi phiên một tính năng; cập nhật PROGRESS.md trước khi dừng.
 
-```bash
-python scripts/run.py                 # chạy dev server (hoặc: fastapi dev app/main.py)
-pytest                                # chạy test
-pytest --cov=app --cov-report=html    # test + coverage
-ruff check . && ruff format .         # lint + format
-alembic revision --autogenerate -m "..."   # tạo migration
-alembic upgrade head                  # áp dụng migration
-```
+## Định nghĩa "Xong" (Definition of Done)
 
-### Frontend (`fe/`)
+Suite test xanh là điều kiện CẦN nhưng CHƯA ĐỦ. "Suite xanh" ≠ "tính năng chạy được" —
+nếu tính năng mới chưa có test bao phủ thì suite xanh không chứng minh được gì.
 
-```bash
-npm run dev      # dev server
-npm run build    # build production
-npm run lint     # eslint
-```
+Một tính năng chỉ "Xong" khi HỘI ĐỦ:
 
-## Kiến trúc backend (tóm tắt)
+1. Gate xanh: `ruff check` + `pytest` (BE) và `lint` + `tsc` (FE) đều pass.
+2. **Đường code mới được CHẠY THẬT ít nhất một lần** (không chỉ chạy suite test):
+   - Endpoint API → gọi thật (curl/httpx) và dán request + response thật.
+   - Màn hình/giao diện → chụp màn hình và đọc lại bằng công cụ Read.
+   - Thay đổi RAG → chạy `rag-eval` (RAGAS + trace Phoenix), đính kèm số.
+3. Mỗi tính năng mới đi kèm ÍT NHẤT một test bao phủ đường code đó (đỏ-trước-khi-sửa,
+   xanh-sau-khi-sửa). Không thêm code mới mà bỏ trống test.
+4. Bằng chứng (output lệnh / ảnh / trace) đã được mở và đưa cho người dùng xem.
 
-Phân tầng rõ ràng — một request đi qua:
+Nếu thiếu bất kỳ mục nào ở trên: CHƯA xong — nói rõ mục nào thiếu, đừng tuyên bố hoàn thành.
 
-```
-routes/ (validate qua schema) → deps.py (DI: db session, auth) → services/ (business logic) → repositories/ (truy vấn DB) → models/ (ORM)
-```
+## Compact Instructions
 
-- `app/core/` — `config.py` (settings từ `.env`), `database.py` (async engine/session), `security.py` (JWT + bcrypt), `redis.py` (blacklist token đăng xuất).
-- `app/api/v1/routes/` — mỗi file = một nhóm endpoint; gộp tại `router.py`. Nhóm `auth.py` xử lý đăng nhập/đăng ký/đăng xuất.
-- `app/models/` — schema đã dựng (9 bảng: `roles`/`users`, `conversations`/`messages`, `*_feedbacks`, `documents`/`document_chunks`, `message_evaluations`). Vector RAG ở **Weaviate Cloud**, đánh giá chất lượng bằng **RAGAS + Arize Phoenix**. Chi tiết: [be/CLAUDE.md](be/CLAUDE.md).
-- Đặt logic vào `services/`/`repositories/`, **không** để business logic trong route handler.
-
-## Frontend (tóm tắt)
-
-- App Router; các trang hiện có: `/` (landing), `/auth`, `/chat`, `/admin`. `/chat` và `/admin` được bảo vệ qua `fe/proxy.ts`.
-- Alias path: `@/*` trỏ về gốc `fe/` (ví dụ `import x from "@/app/lib/..."`).
-- UI port từ thiết kế "Lumina" (xem memory [[lumina-design-source]]).
-
-## Xác thực & phân quyền (auth)
-
-Đăng nhập bằng **email/mật khẩu** *hoặc* **Google**; phiên giữ qua **httpOnly cookie**; phân quyền 2 vai trò `admin`/`user`.
-
-- **Token (httpOnly cookie):** BE cấp `access_token` (ngắn hạn) + `refresh_token` (dài hạn) đặt trong cookie httpOnly — **không** trả trong body. FE gọi API với `credentials: "include"`, tự refresh khi gặp 401. Đăng xuất thu hồi token qua **Redis blacklist** (theo claim `jti`).
-- **Google:** FE lấy access token (`useGoogleLogin`) → BE xác thực qua Google `tokeninfo` (kiểm `aud` == `GOOGLE_CLIENT_ID`) + `userinfo` rồi cấp JWT của hệ thống. `GOOGLE_CLIENT_ID` (be/.env) và `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (fe/.env.local) **phải trùng nhau**; Authorized JavaScript origin phải có `http://localhost:3000`.
-- **Phân quyền:** thực thi thật ở **BE** (`require_admin`); FE chặn route `/chat`,`/admin` bằng `fe/proxy.ts` (Next 16 đổi tên `middleware`→`proxy`) + gate client-side cho trang admin. Sau đăng nhập điều hướng theo vai trò: `admin → /admin`, `user → /chat`.
-- Chi tiết: backend ở [be/CLAUDE.md](be/CLAUDE.md), frontend ở [fe/CLAUDE.md](fe/CLAUDE.md).
-
-## Môi trường & quy ước
-
-- **OS: Windows + PowerShell.** Đường dẫn dùng `\`. Tạo venv: `py -3.14 -m venv .venv` rồi `.venv\Scripts\activate`.
-- Biến môi trường BE đọc từ `be/.env` (copy từ `be/.env.example`) — **không commit `.env`**.
-- **DB `kltn_db` phải tạo với `ENCODING 'UTF8'`** — cluster Windows mặc định WIN1252, không lưu được tiếng Việt.
-- CI (`.github/workflows/python-app.yml`) chỉ chạy cho backend khi push/PR vào `main`: flake8 + pytest.
-- Code & tài liệu trong dự án viết bằng **tiếng Việt**; giữ nhất quán khi thêm comment/doc.
+Giữ lại: danh sách việc đang làm; thay đổi schema DB (Alembic) và lý do; thay đổi prompt;
+kết quả RAGAS gần nhất; lỗi + cách sửa; danh sách file đã sửa.
