@@ -2,6 +2,73 @@
 
 ## Đã xong
 
+- (2026-06-21) **P7 — Hoàn chỉnh chat với AI: FE nối backend thật + lịch sử hội thoại bền vững.**
+  - **BE — 2 endpoint đọc lịch sử (trên nền P6):** `GET /api/v1/chat/conversations` (sidebar, kèm snippet tin cuối)
+    + `GET /chat/conversations/{id}/messages` (đọc lại, **kiểm quyền sở hữu** → 404 nếu không phải của mình).
+    Thêm `conversation_repository.list_by_user` + `latest_message_map` (1 query lấy tin cuối/hội thoại, tránh N+1);
+    `chat_service.list_conversations/get_conversation`; schema `ConversationSummary/MessageOut/ConversationDetail`
+    (map cột `context_sources`→`sources`, ẩn `trace_id`/FK). KHÔNG migration.
+  - **FE — bỏ mock, nối thật:** `lib/api.ts` `chatApi` (ask/listConversations/getMessages); `types/chat.ts`
+    (`Source`, `Msg.sources`, `Convo.serverId/loaded/preview`, DTOs); `lib/chat.ts` mapping DTO→model
+    (`assistant`→bot); viết lại `hooks/useChat.ts` (gọi API thật, nạp lịch sử lazy khi mở, optimistic user-msg +
+    typing, error 401→nhắc đăng nhập, đưa hội thoại vừa trả lời lên đầu); `MessageBubble.tsx` **chip "Nguồn:"**
+    (gộp trùng theo document_id, fallback "Tài liệu #id"); `chat/page.tsx` **auth guard** (redirect /auth nếu chưa
+    đăng nhập) + banner lỗi; `Composer` disable khi đang chờ AI; bỏ `SEED/SCRIPTED/DEFAULT_REPLY` (giữ `TOPICS`).
+  - **Test:** BE **41→47 passed** (+ list/messages 200/404/401, conv_session fixture); FE **36 passed** (9 files;
+    +`chat.test`/`useChat.test`/`MessageBubble.test`/`api` chatApi). ruff + lint + tsc đều xanh.
+  - **Verify THẬT E2E (ảnh đã đọc lại):**
+    - **HTTP** (BE :8000): register→login→`POST /chat/ask` → "Trường THCS Lê Hồng Phong [1]" + 6 nguồn (score là
+      float → JSONB OK); `GET /chat/conversations` có hội thoại + snippet; `GET .../1/messages` đủ 2 tin + nguồn.
+    - **Trình duyệt** (FE dev :3000 ↔ BE :8000): đăng nhập → /chat → **sidebar nạp hội thoại từ DB** (của user) →
+      click mở → render messages + **chip "Nguồn: Tài liệu #11"** → **gửi LIVE** "Phụ huynh nộp hồ sơ…" →
+      "…https://tuyensinhdaucap.hcm.edu.vn" + chip; composer disable→enable; đa lượt cùng `conversation_id`.
+  - **Gotcha verify:** `next dev` (Turbopack, Next 16) trả **404 mọi sub-route** (/auth, /chat) khi còn `fe/.next`
+    cũ từ production `next start` → **xoá `fe/.next`** rồi `preview_start` lại là hết. CORS BE chỉ cho `:3000`
+    (SameSite=Lax same-site localhost → cookie qua được :3000→:8000); auth suy giảm mượt khi Redis tắt.
+  - User test trong DB dev: `parent.e2e@example.com` (tạo lúc verify, vô hại).
+
+- (2026-06-20) **P6 — Đường hỏi-đáp RAG: Hybrid (BM25+vector) + RRF + cross-encoder rerank + LLM.**
+  - **Retrieval (lõi):** `app/rag/retriever.py` `hybrid_retrieve()` — Weaviate-native hybrid qua
+    `index.as_retriever(vector_store_query_mode=HYBRID, alpha=0.6, similarity_top_k=30,
+    vector_store_kwargs={fusion_type: HybridFusion.RANKED, query_properties:["text"]})`. Mẹo: LlamaIndex
+    `WeaviateVectorStore.query()` merge `vector_store_kwargs` vào `collection.query.hybrid()` → ép RRF
+    (rankedFusion) + ưu tiên 60% semantic/40% keyword. **Verify live:** điểm hybrid ~0.0167 = 1/(rank+60)
+    đúng RRF; collection `text` property `searchable=True` (BM25 bật); 25 chunk.
+  - **Rerank:** `app/rag/query_engine.py` dùng `SentenceTransformerRerank` (model `namdp-ptit/ViRanker`,
+    cross-encoder, top_n=6) — **KHÔNG dùng FlagEmbeddingReranker** vì FlagEmbedding 1.4 gọi
+    `tokenizer.prepare_for_model` đã bị bỏ ở transformers 5.x. Chạy local (giữ PII). Lazy-import.
+  - **LLM tổng hợp:** `query_engine.answer_question()` = `retrieve_and_rerank` → `synthesize` (gpt-4o-mini,
+    system prompt tiếng Việt: CHỈ dựa ngữ cảnh, không bịa, trích dẫn [n]). Bọc span `rag.answer` → trace_id.
+  - **Endpoint:** `POST /api/v1/chat/ask` (`routes/chat.py`, `get_current_user`) → `chat_service.ask`
+    (lưu 2 message user+assistant + `context_sources` + `trace_id`, `asyncio.to_thread` cho pipeline chặn);
+    `conversation_repository.py`; `schemas/chat.py`. File khác: `ingest.py`/`document_service.py` (gắn
+    `filename` vào metadata node), `config.py` (hybrid_alpha/retrieval_top_k/rerank_model/top_n/chat_model).
+  - **Schema DB:** KHÔNG migration. Chỉ đổi `Message.context_sources` JSONB → `JSONB().with_variant(JSON(),
+    "sqlite")` (DDL Postgres không đổi; cần cho test SQLite).
+  - **Bug bắt được khi CHẠY THẬT (mock test bỏ lọt):** reranker trả `score` kiểu `np.float32` → lưu cột
+    JSON `TypeError: float32 not JSON serializable`. Sửa: ép `float(ns.score)` trong `_build_context`; thêm
+    test `test_sources_score_is_json_serializable`.
+  - **Test:** +9 (retriever RRF kwargs ×2, query_engine ×4 gồm serialization, chat service+API ×6 trừ trùng)
+    → **41 passed**; ruff xanh.
+  - **Chạy thật (bằng chứng):**
+    - **HTTP** `POST /api/v1/chat/ask` (httpx ASGI, pipeline THẬT) → **200**, answer
+      "…https://tuyensinhdaucap.hcm.edu.vn", 6 sources, DB lưu `['user','assistant']` + context_sources list.
+    - **Phoenix:** init_tracing + answer → **TRACE_ID `5ec5d0dd…`** export lên Phoenix Cloud (project kltn-rag).
+    - **RAGAS** (`be/eval/`, 8 câu hỏi tuyển sinh, ragas 0.2.15 ở venv Python 3.11 riêng — venv chính 3.14
+      thiếu wheel scikit-network):
+
+      | metric | ViRanker | bge-reranker-v2-m3 |
+      |---|---|---|
+      | faithfulness | 0.9375 | 0.9375 |
+      | answer_relevancy | 0.4201 | 0.4757 |
+      | context_precision | 0.7781 | 0.8283 |
+      | context_recall | 0.8125 | 0.8750 |
+
+      A/B: bge nhỉnh hơn trên tập nhỏ này (chủ yếu câu lớp 1); đổi model = 1 dòng `settings.rerank_model`.
+      `answer_relevancy` thấp do 2 câu từ chối-đúng (ngoài corpus) bị RAGAS chấm 0.
+  - **Deps:** thêm `torch==2.12.1+cpu`, `sentence-transformers==5.6.0` (+ transformers/accelerate…);
+    requirements.txt freeze lại + `--extra-index-url` PyTorch CPU. Harness eval ở `be/eval/` (README + 2 script).
+
 - (2026-06-20) **P5 — Admin PDF: xem lại / tải lại / xoá tất cả (mở rộng P4).**
   - **BE:** `GET /api/v1/admin/documents/{id}/file?download=` → `FileResponse` PDF, `content_disposition_type`
     inline (xem) / attachment (tải), filename gốc; `DELETE /api/v1/admin/documents` (không id) → `delete_all_documents`
@@ -109,8 +176,15 @@
 
 ## Tiếp theo
 
-- **Dựng đường query/answer RAG** (retriever → LLM sinh câu trả lời cho chat) → khi đó chạy **RAGAS đầy đủ**
-  (faithfulness/answer_relevancy/context precision+recall) trên tập câu hỏi mẫu; tái dùng `vector_store.retrieve`.
+- **Nối FE chat** gọi `POST /api/v1/chat/ask` (màn hình Lumina) + render câu trả lời & trích dẫn
+  (`sources`); hiện endpoint đã xong + verify HTTP thật.
+- **Lọc metadata nâng cao** (author/title/published_date): thêm cột `documents` (migration Alembic) +
+  form upload nhận trường + gắn vào metadata node + **re-index** data cũ (hiện chunk chỉ có document_id;
+  filename mới gắn từ P6 cho data ingest sau này). `hybrid_retrieve(filters=...)` đã sẵn tham số.
+- **Chốt model rerank theo RAGAS lớn hơn:** tập eval hiện chỉ 8 câu / 1 tài liệu → bge nhỉnh ViRanker nhưng
+  chưa đủ kết luận; mở rộng `be/eval/dataset.json` rồi chạy lại A/B trước khi đổi mặc định.
+- (Tuỳ chọn) **LLM sinh câu trả lời qua Ollama** (local) thay gpt-4o-mini: thêm `llm_provider` config; giữ
+  embedding OpenAI (đổi embedding = phải re-index). Reranker KHÔNG chuyển Ollama được (cross-encoder).
 - Phoenix dùng `SimpleSpanProcessor` (dev) → cân nhắc `BatchSpanProcessor` cho prod (cảnh báo lúc startup).
 - **Redis chưa chạy local** → blacklist token logout tạm vô hiệu (suy giảm mượt). Chạy Redis khi cần test logout thật.
 - Cân nhắc UI xem/tải lại tài liệu (hiện chỉ list + xoá); endpoint tải PDF gốc nếu cần.

@@ -8,6 +8,11 @@
 
 import type { DocumentDTO } from "@/app/types/admin";
 import type { LoginInput, RegisterInput, User } from "@/app/types/auth";
+import type {
+  AskResponseDTO,
+  ConversationDetailDTO,
+  ConversationSummaryDTO,
+} from "@/app/types/chat";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const BASE = `${API_URL}/api/v1`;
@@ -136,4 +141,23 @@ export const documentApi = {
     await ensureOk(res);
     return res.blob();
   },
+};
+
+export const chatApi = {
+  /** Gửi câu hỏi → câu trả lời RAG + nguồn. `conversationId` null = tạo hội thoại mới. */
+  ask: (question: string, conversationId: number | null = null) =>
+    apiFetch("/chat/ask", {
+      method: "POST",
+      body: JSON.stringify({ question, conversation_id: conversationId }),
+    }).then((r) => parse<AskResponseDTO>(r)),
+
+  /** Danh sách hội thoại của người dùng (sidebar), mới nhất trước. */
+  listConversations: () =>
+    apiFetch("/chat/conversations").then((r) => parse<ConversationSummaryDTO[]>(r)),
+
+  /** Toàn bộ tin nhắn của một hội thoại (mở từ sidebar). */
+  getMessages: (id: number) =>
+    apiFetch(`/chat/conversations/${id}/messages`).then((r) =>
+      parse<ConversationDetailDTO>(r),
+    ),
 };

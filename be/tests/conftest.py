@@ -18,7 +18,9 @@ import app.services.auth_service as svc_mod
 from app.core.database import Base, get_db
 from app.core.security import create_access_token
 from app.main import app
+from app.models.conversation import Conversation
 from app.models.document import Document, DocumentChunk
+from app.models.message import Message
 from app.models.role import Role
 from app.models.user import User
 
@@ -156,6 +158,8 @@ async def _build_authed_client(monkeypatch, role_name):
                     User.__table__,
                     Document.__table__,
                     DocumentChunk.__table__,
+                    Conversation.__table__,
+                    Message.__table__,
                 ],
             )
         )
@@ -233,6 +237,49 @@ async def doc_session():
     )
     async with session_maker() as session:
         yield session
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def conv_session():
+    """Session SQLite riêng (roles/users/conversations/messages) + sẵn 1 user, cho test
+    tầng service hỏi-đáp. Trả (session, user_id)."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            lambda c: Base.metadata.create_all(
+                c,
+                tables=[
+                    Role.__table__,
+                    User.__table__,
+                    Conversation.__table__,
+                    Message.__table__,
+                ],
+            )
+        )
+    session_maker = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with session_maker() as session:
+        role = Role(name="user", description="Người dùng")
+        session.add(role)
+        await session.commit()
+        await session.refresh(role)
+        user = User(
+            role_id=role.id,
+            name="user-test",
+            email="chat@test.local",
+            password_hash="x",
+            auth_provider="local",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        yield session, user.id
     await engine.dispose()
 
 

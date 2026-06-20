@@ -13,7 +13,9 @@ interface ConversationItemProps {
 /** Một mục trong danh sách cuộc trò chuyện ở sidebar. */
 export default function ConversationItem({ convo, active, onClick }: ConversationItemProps) {
   const last = convo.messages[convo.messages.length - 1];
-  const snippet = last ? (last.from === "user" ? "Ba mẹ: " : "") + last.text : "Bắt đầu trò chuyện…";
+  const snippet = last
+    ? (last.from === "user" ? "Ba mẹ: " : "") + last.text
+    : (convo.preview ?? "Bắt đầu trò chuyện…");
 
   return (
     <div className="ch-convo" onClick={onClick} style={{ display: "flex", gap: 11, alignItems: "flex-start", padding: "10px 11px", borderRadius: 14, cursor: "pointer", transition: "background .15s", background: active ? "var(--brand-subtle)" : undefined }}>

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import AppHeader from "@/app/components/common/AppHeader";
 import LogoBadge from "@/app/components/common/LogoBadge";
 import UserMenu from "@/app/components/common/UserMenu";
@@ -11,8 +13,23 @@ import ChatThread from "./_components/ChatThread";
 import Composer from "./_components/Composer";
 
 export default function ChatPage() {
-  const { user } = useAuth();
+  const router = useRouter();
+  const { user, loading } = useAuth();
   const chat = useChat(user?.name);
+
+  // Chat cá nhân hoá + lịch sử cần đăng nhập; chưa đăng nhập → về trang /auth.
+  useEffect(() => {
+    if (loading) return;
+    if (!user) router.replace("/auth");
+  }, [loading, user, router]);
+
+  if (loading || !user) {
+    return (
+      <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--font-body)", color: "var(--text-muted)" }}>
+        Đang tải…
+      </div>
+    );
+  }
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", fontFamily: "var(--font-body)", color: "var(--text-body)", background: "var(--ink-100)" }}>
@@ -42,7 +59,12 @@ export default function ChatPage() {
             topics={TOPICS}
             onTopic={(t) => chat.send(t)}
           />
-          <Composer value={chat.text} onChange={chat.setText} onSend={() => chat.send()} />
+          {chat.error && (
+            <div style={{ margin: "0 clamp(18px,6vw,90px) 4px", padding: "8px 12px", background: "var(--surface-card)", border: "1px solid var(--danger-500)", color: "var(--danger-500)", borderRadius: "var(--radius-sm)", fontSize: 13, textAlign: "center" }}>
+              {chat.error}
+            </div>
+          )}
+          <Composer value={chat.text} onChange={chat.setText} onSend={() => chat.send()} disabled={chat.typing} />
         </main>
       </div>
     </div>

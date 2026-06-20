@@ -39,13 +39,19 @@ def count_tokens(text: str) -> int:
     return len(encoding.encode(text))
 
 
-def chunk_to_nodes(text: str, document_id: int) -> list[TextNode]:
+def chunk_to_nodes(
+    text: str, document_id: int, filename: str | None = None
+) -> list[TextNode]:
     """Chia văn bản thành node theo câu (chunk_size/overlap từ config).
 
-    Gắn metadata ``document_id`` vào mỗi node để truy vết/lọc khi truy hồi."""
+    Gắn metadata ``document_id`` (+ ``filename`` nếu có) vào mỗi node để truy vết/lọc khi
+    truy hồi. ``filename`` là tên tài liệu (không phải PII học sinh) → an toàn để lọc/ trích dẫn."""
     splitter = SentenceSplitter(
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
     )
-    doc = LIDocument(text=text, metadata={"document_id": document_id})
+    metadata: dict[str, object] = {"document_id": document_id}
+    if filename:
+        metadata["filename"] = filename
+    doc = LIDocument(text=text, metadata=metadata)
     return splitter.get_nodes_from_documents([doc])

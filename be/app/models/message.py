@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -34,7 +34,10 @@ class Message(CreatedAtMixin, Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # Nguồn RAG trích dẫn: [{document_id, chunk_id, weaviate_uuid, snippet, score}].
-    context_sources: Mapped[list[dict] | None] = mapped_column(JSONB)
+    # JSONB trên Postgres; biến thể JSON cho SQLite (test) — DDL Postgres không đổi.
+    context_sources: Mapped[list[dict] | None] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite")
+    )
     # Id trace để đối chiếu với Arize Phoenix (OpenTelemetry).
     trace_id: Mapped[str | None] = mapped_column(String(255))
 

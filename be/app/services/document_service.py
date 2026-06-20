@@ -98,6 +98,7 @@ async def ingest_document(document_id: int) -> None:
             logger.warning("ingest: tài liệu %s không tồn tại, bỏ qua.", document_id)
             return
         file_path = document.file_path
+        filename = document.filename
 
     try:
         # 1) Trích xuất + chunk (CPU-bound → thread)
@@ -106,7 +107,9 @@ async def ingest_document(document_id: int) -> None:
             raise ValueError(
                 "Không trích xuất được văn bản từ PDF (có thể là bản scan ảnh)."
             )
-        nodes = await asyncio.to_thread(ingest.chunk_to_nodes, text, document_id)
+        nodes = await asyncio.to_thread(
+            ingest.chunk_to_nodes, text, document_id, filename
+        )
         if not nodes:
             raise ValueError("PDF không tạo được chunk nào.")
 

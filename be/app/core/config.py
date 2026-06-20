@@ -45,18 +45,32 @@ class Settings(BaseSettings):
     upload_dir: str = "storage/uploads"
     max_upload_mb: int = 25
 
-    # OpenAI (embedding tài liệu RAG)
+    # OpenAI (embedding tài liệu RAG + LLM tổng hợp câu trả lời)
     openai_api_key: str = ""
     openai_embed_model: str = "text-embedding-3-small"
+    openai_chat_model: str = "gpt-4o-mini"
 
     # Weaviate Cloud (vector store)
     weaviate_url: str = ""
     weaviate_api_key: str = ""
     weaviate_collection: str = "DocumentChunk"
+    # Tên property chứa text trong collection (LlamaIndex mặc định "text"); BM25 chỉ
+    # nên chấm điểm property này (tránh nhiễu từ "_node_content").
+    weaviate_text_key: str = "text"
 
     # Chunking (SentenceSplitter)
     chunk_size: int = 512
     chunk_overlap: int = 64
+
+    # Retrieval hybrid (BM25 keyword + vector semantic, hợp nhất RRF)
+    # alpha=1.0 thuần vector, 0.0 thuần keyword; 0.6 ⇒ ưu tiên 60% semantic / 40% keyword.
+    hybrid_alpha: float = 0.6
+    retrieval_top_k: int = 30  # số ứng viên sau hybrid+RRF, trước khi rerank
+
+    # Cross-encoder rerank (chạy local qua sentence-transformers, giữ PII trên máy).
+    # Đổi sang "BAAI/bge-reranker-v2-m3" để A/B bằng RAGAS.
+    rerank_model: str = "namdp-ptit/ViRanker"
+    rerank_top_n: int = 6  # số chunk cuối cùng đưa vào LLM
 
     # Arize Phoenix (tracing LLM/embedding qua OTEL). Tắt → không khởi tạo tracing.
     phoenix_enabled: bool = True

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, documentApi } from "./api";
+import { ApiError, chatApi, documentApi } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -30,5 +30,45 @@ describe("documentApi.fetchFile", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(documentApi.fetchFile(9)).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("chatApi.ask", () => {
+  it("POST /chat/ask đúng URL + body (question, conversation_id)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ conversation_id: 7, answer: "Đáp.", sources: [] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await chatApi.ask("Khi nào tuyển sinh?", 7);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/chat/ask");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      question: "Khi nào tuyển sinh?",
+      conversation_id: 7,
+    });
+    expect(out.conversation_id).toBe(7);
+  });
+
+  it("không truyền id → conversation_id null", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ conversation_id: 1, answer: "x", sources: [] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chatApi.ask("Hỏi?");
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      question: "Hỏi?",
+      conversation_id: null,
+    });
   });
 });
