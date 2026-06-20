@@ -41,5 +41,28 @@ class Settings(BaseSettings):
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000"]
 
+    # Lưu trữ file PDF tải lên (đường dẫn tương đối gốc be/ hoặc tuyệt đối)
+    upload_dir: str = "storage/uploads"
+    max_upload_mb: int = 25
+
+    # OpenAI (embedding tài liệu RAG)
+    openai_api_key: str = ""
+    openai_embed_model: str = "text-embedding-3-small"
+
+    # Weaviate Cloud (vector store)
+    weaviate_url: str = ""
+    weaviate_api_key: str = ""
+    weaviate_collection: str = "DocumentChunk"
+
+    # Chunking (SentenceSplitter)
+    chunk_size: int = 512
+    chunk_overlap: int = 64
+
+    # Arize Phoenix (tracing LLM/embedding qua OTEL). Tắt → không khởi tạo tracing.
+    phoenix_enabled: bool = True
+    phoenix_collector_endpoint: str = ""
+    phoenix_api_key: str = ""
+    phoenix_project_name: str = "kltn-rag"
+
 
 settings = Settings()

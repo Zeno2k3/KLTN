@@ -40,3 +40,6 @@ logs/
 
 # Alembic
 alembic/versions/*.pyc
+
+# File PDF tải lên (kho lưu trữ local)
+storage/

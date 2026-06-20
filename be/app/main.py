@@ -5,12 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.observability import init_tracing
 from app.core.redis import close_redis, init_redis
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # startup
+    init_tracing()  # OTEL → Phoenix (no-op nếu tắt); trước khi có request RAG
     await init_redis()
     yield
     # shutdown

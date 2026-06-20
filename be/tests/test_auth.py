@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.deps import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME, require_roles
+from app.schemas.auth import UserResponse
 
 
 async def _register(client, email="a@b.com", password="password123", name="Nguyễn A"):
@@ -116,3 +117,18 @@ async def test_require_roles_allows_admin():
     checker = require_roles("admin")
     admin = SimpleNamespace(role=SimpleNamespace(name="admin"))
     assert await checker(current_user=admin) is admin
+
+
+def test_user_response_accepts_local_domain_email():
+    """Email domain đặc biệt (.local của admin seed) không được làm vỡ response (regression)."""
+    user = SimpleNamespace(
+        id=1,
+        name="Quản trị viên",
+        email="admin@lumina.local",
+        role=SimpleNamespace(name="admin"),
+        avatar_url=None,
+        is_active=True,
+    )
+    resp = UserResponse.from_user(user)
+    assert resp.email == "admin@lumina.local"
+    assert resp.role == "admin"

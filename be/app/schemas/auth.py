@@ -42,7 +42,9 @@ class UserResponse(BaseModel):
 
     id: int
     name: str
-    email: EmailStr
+    # ``str`` (không ``EmailStr``): chỉ phản chiếu email đã lưu, không cần validate RFC.
+    # EmailStr từ chối domain đặc biệt như ``.local`` (vd admin seed admin@lumina.local) → 500.
+    email: str
     role: str
     avatar_url: str | None = None
     is_active: bool

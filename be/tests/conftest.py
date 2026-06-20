@@ -9,13 +9,16 @@ Test không cần Postgres/Redis thật:
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 import app.api.deps as deps_mod
 import app.services.auth_service as svc_mod
 from app.core.database import Base, get_db
+from app.core.security import create_access_token
 from app.main import app
+from app.models.document import Document, DocumentChunk
 from app.models.role import Role
 from app.models.user import User
 
@@ -132,3 +135,114 @@ def fake_google(monkeypatch):
     monkeypatch.setattr(svc_mod.settings, "google_client_id", "test-client-id")
     monkeypatch.setattr(svc_mod.httpx, "AsyncClient", _FakeGoogleClient)
     return _FakeGoogleClient.idinfo
+
+
+async def _build_authed_client(monkeypatch, role_name):
+    """Client httpx đã gắn cookie xác thực sẵn cho 1 user vai trò ``role_name``.
+
+    Khác fixture ``client``: thêm bảng documents/document_chunks và tạo user thật trong
+    DB (vì ``require_admin`` kiểm tra vai trò theo DB, không theo claim token)."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            lambda c: Base.metadata.create_all(
+                c,
+                tables=[
+                    Role.__table__,
+                    User.__table__,
+                    Document.__table__,
+                    DocumentChunk.__table__,
+                ],
+            )
+        )
+
+    test_session = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    async with test_session() as s:
+        s.add_all(
+            [
+                Role(name="admin", description="Quản trị viên"),
+                Role(name="user", description="Người dùng"),
+            ]
+        )
+        await s.commit()
+        role = await s.scalar(select(Role).where(Role.name == role_name))
+        user = User(
+            role_id=role.id,
+            name=f"{role_name}-test",
+            email=f"{role_name}@test.local",
+            password_hash="x",
+            auth_provider="local",
+        )
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        user_id = user.id
+
+    async def override_get_db():
+        async with test_session() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    async def fake_is_blacklisted(jti):
+        return False
+
+    monkeypatch.setattr(deps_mod, "is_blacklisted", fake_is_blacklisted)
+
+    token = create_access_token(user_id, role_name)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        cookies={deps_mod.ACCESS_COOKIE_NAME: token},
+    ) as c:
+        yield c
+
+    app.dependency_overrides.clear()
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def doc_session():
+    """Session SQLite riêng (bảng documents + document_chunks) cho test tầng repository."""
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            lambda c: Base.metadata.create_all(
+                c, tables=[Document.__table__, DocumentChunk.__table__]
+            )
+        )
+    session_maker = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with session_maker() as session:
+        yield session
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def admin_client(monkeypatch):
+    async for c in _build_authed_client(monkeypatch, "admin"):
+        yield c
+
+
+@pytest_asyncio.fixture
+async def user_client(monkeypatch):
+    async for c in _build_authed_client(monkeypatch, "user"):
+        yield c
