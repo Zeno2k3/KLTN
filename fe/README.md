@@ -4,13 +4,13 @@ Giao diện người dùng xây dựng bằng **Next.js 16**, **React 19**, **Ty
 
 ## Tech Stack
 
-| Công nghệ | Phiên bản | Mô tả |
-|---|---|---|
-| Next.js | 16.2.9 | React framework với App Router |
-| React | 19.2.4 | UI library |
-| TypeScript | ^5 | Type-safe JavaScript |
-| Tailwind CSS | ^4 | Utility-first CSS framework |
-| ESLint | ^9 | Linting |
+| Công nghệ    | Phiên bản | Mô tả                          |
+| ------------ | --------- | ------------------------------ |
+| Next.js      | 16.2.9    | React framework với App Router |
+| React        | 19.2.4    | UI library                     |
+| TypeScript   | ^5        | Type-safe JavaScript           |
+| Tailwind CSS | ^4        | Utility-first CSS framework    |
+| ESLint       | ^9        | Linting                        |
 
 ## Cấu trúc thư mục
 
@@ -68,13 +68,13 @@ app/
 npm install
 
 # Chạy development server (http://localhost:3000)
-npm run dev
+npm start
 
 # Build production
 npm run build
 
 # Chạy production
-npm run start
+npm start
 
 # Lint
 npm run lint
@@ -85,5 +85,5 @@ npm run lint
 `tsconfig.json` đã cấu hình alias `@/*` trỏ về root:
 
 ```ts
-import { Button } from "@/app/components/ui/Button"
+import { Button } from "@/app/components/ui/Button";
 ```

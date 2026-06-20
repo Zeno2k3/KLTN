@@ -1,7 +1,6 @@
 import type { CSSProperties } from "react";
-import Button from "@/app/components/ui/Button";
-import Icon from "@/app/components/ui/Icon";
 import LogoLockup from "@/app/components/common/LogoLockup";
+import LandingNavActions from "./LandingNavActions";
 
 const navLink: CSSProperties = {
   padding: "8px 13px",
@@ -24,8 +23,7 @@ export default function LandingNav() {
           <a href="#danhgia" style={navLink}>Đánh giá</a>
         </nav>
         <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
-          <Button href="/auth" variant="ghost" size="sm">Đăng ký</Button>
-          <Button href="/chat" variant="primary" size="sm" iconLeft={<Icon name="message-circle" />}>Hỏi LuminaAi</Button>
+          <LandingNavActions />
         </div>
       </div>
     </header>
