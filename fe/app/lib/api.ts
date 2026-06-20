@@ -6,6 +6,7 @@
  * rồi thử lại request gốc.
  */
 
+import type { DocumentDTO } from "@/app/types/admin";
 import type { LoginInput, RegisterInput, User } from "@/app/types/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -29,11 +30,13 @@ export class ApiError extends Error {
 }
 
 function rawFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  return fetch(`${BASE}${path}`, {
-    ...options,
-    credentials: "include",
-    headers: { "Content-Type": "application/json", ...options.headers },
-  });
+  // Với FormData (upload tệp) KHÔNG đặt Content-Type — trình duyệt tự thêm boundary.
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+  const headers: HeadersInit = isFormData
+    ? { ...options.headers }
+    : { "Content-Type": "application/json", ...options.headers };
+  return fetch(`${BASE}${path}`, { ...options, credentials: "include", headers });
 }
 
 // Gộp nhiều request refresh đồng thời thành một.
@@ -60,18 +63,26 @@ async function apiFetch(path: string, options: RequestInit = {}): Promise<Respon
   return res;
 }
 
-async function parse<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    let detail = "Có lỗi xảy ra, vui lòng thử lại.";
-    try {
-      const body = await res.json();
-      if (typeof body?.detail === "string") detail = body.detail;
-    } catch {
-      // body không phải JSON — giữ thông báo mặc định
-    }
-    throw new ApiError(detail, res.status);
+async function ensureOk(res: Response): Promise<Response> {
+  if (res.ok) return res;
+  let detail = "Có lỗi xảy ra, vui lòng thử lại.";
+  try {
+    const body = await res.json();
+    if (typeof body?.detail === "string") detail = body.detail;
+  } catch {
+    // body không phải JSON — giữ thông báo mặc định
   }
+  throw new ApiError(detail, res.status);
+}
+
+async function parse<T>(res: Response): Promise<T> {
+  await ensureOk(res);
   return res.json() as Promise<T>;
+}
+
+/** Cho response không có body (vd 204 No Content): ném ApiError nếu lỗi, ngược lại void. */
+async function parseEmpty(res: Response): Promise<void> {
+  await ensureOk(res);
 }
 
 export const authApi = {
@@ -97,4 +108,32 @@ export const authApi = {
     apiFetch("/auth/logout", { method: "POST" }).then((r) => parse<{ detail: string }>(r)),
 
   me: () => apiFetch("/auth/me").then((r) => parse<User>(r)),
+};
+
+export const documentApi = {
+  list: () => apiFetch("/admin/documents").then((r) => parse<DocumentDTO[]>(r)),
+
+  upload: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return apiFetch("/admin/documents", { method: "POST", body: form }).then((r) =>
+      parse<DocumentDTO>(r),
+    );
+  },
+
+  remove: (id: number) =>
+    apiFetch(`/admin/documents/${id}`, { method: "DELETE" }).then((r) => parseEmpty(r)),
+
+  removeAll: () =>
+    apiFetch("/admin/documents", { method: "DELETE" }).then((r) =>
+      parse<{ deleted: number }>(r),
+    ),
+
+  /** Tải file PDF qua apiFetch (tự refresh khi 401) → Blob, để xem/tải an toàn cả khi
+   * access token ngắn hạn đã hết (điều hướng <a> thẳng sẽ không tự refresh được). */
+  fetchFile: async (id: number): Promise<Blob> => {
+    const res = await apiFetch(`/admin/documents/${id}/file`);
+    await ensureOk(res);
+    return res.blob();
+  },
 };

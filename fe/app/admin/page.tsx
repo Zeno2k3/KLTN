@@ -14,7 +14,7 @@ export default function AdminPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const [tab, setTab] = useState<"stats" | "docs">("stats");
-  const { docs, onPick, deleteDoc } = useDocuments();
+  const { docs, loading: docsLoading, error: docsError, onPick, deleteDoc, deleteAll, openDoc } = useDocuments();
   const isStats = tab === "stats";
 
   // Chỉ admin mới vào được; backend cũng chặn các API admin (require_admin).
@@ -47,7 +47,7 @@ export default function AdminPage() {
         <AdminSidebar tab={tab} onTab={setTab} docCount={docs.length} />
 
         <main className="ad-scroll" style={{ flex: 1, minWidth: 0, overflowY: "auto", overflowX: "hidden", padding: "30px clamp(20px,4vw,44px) 44px" }}>
-          {isStats ? <StatsView stats={stats} /> : <DocsView docs={docs} onPick={onPick} onDelete={deleteDoc} />}
+          {isStats ? <StatsView stats={stats} /> : <DocsView docs={docs} onPick={onPick} onDelete={deleteDoc} onDeleteAll={deleteAll} onOpen={openDoc} loading={docsLoading} error={docsError} />}
         </main>
       </div>
     </div>
