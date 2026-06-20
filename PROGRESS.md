@@ -31,6 +31,24 @@
   - Bật lại `CI=true npm test` trong gate + sửa lại CLAUDE.md/fe/CLAUDE.md. Bằng chứng: Stop hook đầy-đủ chạy
     BE(ruff+pytest 12) + FE(lint+tsc+vitest 4) → exit 0, không chặn.
 
+- (2026-06-20) **P3 — Header trang chủ phản ánh trạng thái đăng nhập (sửa "tưởng bị đăng xuất").**
+  - **Triệu chứng người dùng:** đăng nhập xong, đóng/mở lại trình duyệt → tưởng bị đăng xuất.
+  - **Chẩn đoán (KHÔNG phải mất phiên):** xác minh bằng trình duyệt thật trên `localhost:3000` rằng
+    cookie là persistent (Max-Age access 1800s / refresh 604800s, expiry tương lai), `/refresh` trả 200,
+    và `/me` = 200 ở CẢ trang chủ lẫn `/chat` sau khi tải mới (React state về 0, chỉ còn cookie). Phiên KHÔNG mất.
+    Đã loại trừ: Edit clear-on-close (TẮT), localhost vs 127.0.0.1, BE down, SECRET_KEY (BE dùng đúng `.env`,
+    ổn định qua restart). Gốc rễ: [fe/app/_components/LandingNav.tsx] là Server Component TĨNH, luôn hiện nút
+    "Đăng ký" bất kể đăng nhập → người dùng về trang chủ thấy "Đăng ký" nên tưởng mất phiên.
+  - **Sửa:** tách cụm nút phải thành client component [fe/app/_components/LandingNavActions.tsx] dùng `useAuth`:
+    đã đăng nhập → "Vào chat" + `UserMenu`; chưa → "Đăng ký" + "Hỏi LuminaAi"; đang `loading` → chừa chỗ (tránh nháy).
+  - **Test:** [fe/app/_components/LandingNavActions.test.tsx] (mock `useAuth`/`UserMenu`/`Button`) — 3 ca:
+    đăng nhập / chưa / loading. Lưu ý: vì `globals` TẮT, phải gọi `cleanup()` thủ công trong `afterEach`
+    (nếu không render tích lũy giữa test → fail giả). Gate FE xanh: lint + tsc + **7/7** test.
+  - **Phát hiện quan trọng:** `localhost:3000` của user đang chạy **`next start` (production build)**, KHÔNG phải
+    `next dev` (header `x-nextjs-prerender:1`, `/_next/webpack-hmr`→404). Production KHÔNG hot-reload → mọi sửa đổi
+    FE không hiện cho tới khi **`npm run build && npm run start`** hoặc chạy **`npm run dev`**. Đây là lý do fix
+    chưa thấy ở `:3000` khi verify; bằng chứng live của fix cần dev/rebuild.
+
 ## Đang làm
 
 - (chưa có)
