@@ -1,9 +1,14 @@
 """Test hỏi-đáp RAG: service lưu đúng 2 tin nhắn (user+assistant) + nguồn + trace; endpoint
 yêu cầu đăng nhập, trả câu trả lời, và nối tiếp được hội thoại. Pipeline RAG được MOCK."""
 
+import time
+from uuid import uuid4
+
 import pytest
 
+import app.main as app_main
 from app.models.base import MessageSender
+from app.models.document import Document, DocumentChunk
 from app.rag import query_engine
 from app.repositories import conversation_repository
 from app.services import chat_service
@@ -71,6 +76,98 @@ async def test_service_rejects_empty_question(conv_session):
     with pytest.raises(Exception) as exc:
         await chat_service.ask(session, user_id=user_id, question="   ")
     assert getattr(exc.value, "status_code", None) == 400
+
+
+# --- Timeout pipeline RAG → 503 thân thiện (không treo) ---
+
+
+@pytest.mark.asyncio
+async def test_service_raises_503_on_rag_timeout(conv_session, monkeypatch):
+    """RAG vượt ``rag_timeout_seconds`` → HTTPException 503 thay vì treo vô hạn."""
+    session, user_id = conv_session
+
+    def _slow(question, filters=None):
+        time.sleep(0.2)  # lâu hơn timeout đặt bên dưới
+        return query_engine.AnswerResult(answer="muộn", sources=[], trace_id=None)
+
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _slow)
+    monkeypatch.setattr(chat_service.settings, "rag_timeout_seconds", 0.02)
+
+    with pytest.raises(Exception) as exc:
+        await chat_service.ask(session, user_id=user_id, question="Câu hỏi chậm?")
+    assert getattr(exc.value, "status_code", None) == 503
+    assert "thử lại" in getattr(exc.value, "detail", "")
+
+
+# --- Warm-up reranker lúc startup (lifespan) ---
+
+
+async def _run_lifespan_with_stubs(monkeypatch, *, warmup_enabled):
+    """Chạy lifespan với init_tracing/redis bị vô hiệu; trả số lần warmup được gọi."""
+    calls: list[int] = []
+    monkeypatch.setattr(app_main, "init_tracing", lambda: None)
+
+    async def _noop():
+        return None
+
+    monkeypatch.setattr(app_main, "init_redis", _noop)
+    monkeypatch.setattr(app_main, "close_redis", _noop)
+    monkeypatch.setattr(query_engine, "warmup", lambda: calls.append(1))
+    monkeypatch.setattr(app_main.settings, "rerank_warmup", warmup_enabled)
+
+    async with app_main.lifespan(app_main.app):
+        pass
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_lifespan_warms_up_reranker_when_enabled(monkeypatch):
+    calls = await _run_lifespan_with_stubs(monkeypatch, warmup_enabled=True)
+    assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_skips_warmup_when_disabled(monkeypatch):
+    calls = await _run_lifespan_with_stubs(monkeypatch, warmup_enabled=False)
+    assert calls == []
+
+
+# --- Chọn reranker theo provider (mặc định Cohere API) ---
+
+
+def test_get_reranker_cohere_uses_api_key_and_model(monkeypatch):
+    """provider='cohere' → khởi tạo CohereRerank với đúng api_key/model/top_n."""
+    import llama_index.postprocessor.cohere_rerank as cohere_mod
+
+    captured = {}
+
+    class _FakeCohere:
+        def __init__(self, api_key, model, top_n):
+            captured.update(api_key=api_key, model=model, top_n=top_n)
+
+    monkeypatch.setattr(cohere_mod, "CohereRerank", _FakeCohere)
+    monkeypatch.setattr(query_engine, "_reranker", None)
+    monkeypatch.setattr(query_engine.settings, "rerank_provider", "cohere")
+    monkeypatch.setattr(query_engine.settings, "rerank_model", "rerank-multilingual-v3.0")
+    monkeypatch.setattr(query_engine.settings, "rerank_top_n", 6)
+    monkeypatch.setattr(query_engine.settings, "cohere_api_key", "test-key")
+
+    reranker = query_engine._get_reranker()
+    assert isinstance(reranker, _FakeCohere)
+    assert captured == {
+        "api_key": "test-key",
+        "model": "rerank-multilingual-v3.0",
+        "top_n": 6,
+    }
+
+
+def test_get_reranker_cohere_missing_key_raises(monkeypatch):
+    """provider='cohere' nhưng thiếu COHERE_API_KEY → RuntimeError rõ ràng (không gọi mạng mù)."""
+    monkeypatch.setattr(query_engine, "_reranker", None)
+    monkeypatch.setattr(query_engine.settings, "rerank_provider", "cohere")
+    monkeypatch.setattr(query_engine.settings, "cohere_api_key", "")
+    with pytest.raises(RuntimeError, match="COHERE_API_KEY"):
+        query_engine._get_reranker()
 
 
 @pytest.mark.asyncio
@@ -193,3 +290,236 @@ async def test_list_and_get_conversation_via_api(user_client, monkeypatch):
 async def test_get_conversation_missing_returns_404(user_client):
     resp = await user_client.get("/api/v1/chat/conversations/99999/messages")
     assert resp.status_code == 404
+
+
+# --- Đổi tên hội thoại ---
+
+
+@pytest.mark.asyncio
+async def test_rename_conversation_updates_title(conv_session, monkeypatch):
+    session, user_id = conv_session
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _fake_answer())
+    out = await chat_service.ask(session, user_id=user_id, question="Tên cũ?")
+
+    summary = await chat_service.rename_conversation(
+        session, user_id=user_id, conversation_id=out.conversation_id, title="Tên mới"
+    )
+    assert summary.id == out.conversation_id
+    assert summary.title == "Tên mới"
+
+    refetched = await conversation_repository.get_by_id(session, out.conversation_id)
+    assert refetched.title == "Tên mới"
+
+
+@pytest.mark.asyncio
+async def test_rename_conversation_foreign_raises_404(conv_session):
+    session, user_id = conv_session
+    other = await conversation_repository.create(session, user_id=user_id + 999)
+    await session.commit()
+    with pytest.raises(Exception) as exc:
+        await chat_service.rename_conversation(
+            session, user_id=user_id, conversation_id=other.id, title="Hack"
+        )
+    assert getattr(exc.value, "status_code", None) == 404
+
+
+@pytest.mark.asyncio
+async def test_rename_conversation_rejects_blank_title(conv_session, monkeypatch):
+    session, user_id = conv_session
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _fake_answer())
+    out = await chat_service.ask(session, user_id=user_id, question="Câu hỏi?")
+    with pytest.raises(Exception) as exc:
+        await chat_service.rename_conversation(
+            session, user_id=user_id, conversation_id=out.conversation_id, title="   "
+        )
+    assert getattr(exc.value, "status_code", None) == 400
+
+
+@pytest.mark.asyncio
+async def test_rename_endpoint_requires_auth(client):
+    resp = await client.patch("/api/v1/chat/conversations/1", json={"title": "X"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_rename_via_api(user_client, monkeypatch):
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _fake_answer())
+    ask = await user_client.post("/api/v1/chat/ask", json={"question": "Tên gốc?"})
+    cid = ask.json()["conversation_id"]
+
+    resp = await user_client.patch(
+        f"/api/v1/chat/conversations/{cid}", json={"title": "Tên đã đổi"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["title"] == "Tên đã đổi"
+
+    lst = await user_client.get("/api/v1/chat/conversations")
+    item = next(c for c in lst.json() if c["id"] == cid)
+    assert item["title"] == "Tên đã đổi"
+
+
+@pytest.mark.asyncio
+async def test_rename_via_api_validates_blank_title(user_client, monkeypatch):
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _fake_answer())
+    ask = await user_client.post("/api/v1/chat/ask", json={"question": "Hỏi?"})
+    cid = ask.json()["conversation_id"]
+    resp = await user_client.patch(
+        f"/api/v1/chat/conversations/{cid}", json={"title": ""}
+    )
+    assert resp.status_code == 422  # pydantic min_length=1
+
+
+# --- Xóa hội thoại ---
+
+
+@pytest.mark.asyncio
+async def test_delete_conversation_removes_it(conv_session, monkeypatch):
+    session, user_id = conv_session
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _fake_answer())
+    out = await chat_service.ask(session, user_id=user_id, question="Sẽ bị xóa?")
+
+    await chat_service.delete_conversation(
+        session, user_id=user_id, conversation_id=out.conversation_id
+    )
+    assert await conversation_repository.get_by_id(session, out.conversation_id) is None
+    # (Cascade xóa messages do FK ``ON DELETE CASCADE`` của Postgres lo; SQLite test
+    #  không bật FK nên không kiểm ở đây — đã phủ gián tiếp qua test API trả 404.)
+
+
+@pytest.mark.asyncio
+async def test_delete_conversation_foreign_raises_404(conv_session):
+    session, user_id = conv_session
+    other = await conversation_repository.create(session, user_id=user_id + 999)
+    await session.commit()
+    with pytest.raises(Exception) as exc:
+        await chat_service.delete_conversation(
+            session, user_id=user_id, conversation_id=other.id
+        )
+    assert getattr(exc.value, "status_code", None) == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_endpoint_requires_auth(client):
+    resp = await client.delete("/api/v1/chat/conversations/1")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_via_api(user_client, monkeypatch):
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _fake_answer())
+    ask = await user_client.post("/api/v1/chat/ask", json={"question": "Xóa tôi?"})
+    cid = ask.json()["conversation_id"]
+
+    resp = await user_client.delete(f"/api/v1/chat/conversations/{cid}")
+    assert resp.status_code == 204, resp.text
+
+    # Vắng khỏi danh sách + đọc lại 404.
+    lst = await user_client.get("/api/v1/chat/conversations")
+    assert all(c["id"] != cid for c in lst.json())
+    msgs = await user_client.get(f"/api/v1/chat/conversations/{cid}/messages")
+    assert msgs.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_via_api_missing_returns_404(user_client):
+    resp = await user_client.delete("/api/v1/chat/conversations/99999")
+    assert resp.status_code == 404
+
+
+# --- Bảng trích dẫn: đọc tài liệu + đoạn text (GET /chat/documents/{id}) ---
+
+
+async def _seed_document(session_maker, *, chunks: list[tuple[int, str, bool]]):
+    """Tạo 1 tài liệu + các chunk (chunk_index, content, có_uuid) → trả document_id."""
+    async with session_maker() as s:
+        doc = Document(
+            filename="bang-hoc-phi.pdf",
+            file_path="/tmp/bang-hoc-phi.pdf",
+            page_count=9,
+        )
+        s.add(doc)
+        await s.commit()
+        await s.refresh(doc)
+        s.add_all(
+            [
+                DocumentChunk(
+                    document_id=doc.id,
+                    chunk_index=idx,
+                    content=content,
+                    weaviate_uuid=uuid4() if has_uuid else None,
+                )
+                for idx, content, has_uuid in chunks
+            ]
+        )
+        await s.commit()
+        return doc.id
+
+
+@pytest.mark.asyncio
+async def test_get_document_detail_returns_ordered_chunks(doc_session):
+    """Service: trả tài liệu + chunk đúng thứ tự ``chunk_index`` + uuid dạng chuỗi."""
+    doc = Document(filename="hp.pdf", file_path="/tmp/hp.pdf", page_count=5)
+    doc_session.add(doc)
+    await doc_session.commit()
+    await doc_session.refresh(doc)
+    doc_session.add_all(
+        [
+            DocumentChunk(
+                document_id=doc.id,
+                chunk_index=1,
+                content="Đoạn hai",
+                weaviate_uuid=uuid4(),
+            ),
+            DocumentChunk(document_id=doc.id, chunk_index=0, content="Đoạn một"),
+        ]
+    )
+    await doc_session.commit()
+
+    detail = await chat_service.get_document_detail(doc_session, doc.id)
+    assert detail.filename == "hp.pdf"
+    assert detail.page_count == 5
+    assert detail.chunk_count == 2
+    assert [c.chunk_index for c in detail.chunks] == [0, 1]  # sắp theo chunk_index
+    assert detail.chunks[0].content == "Đoạn một"
+    assert detail.chunks[0].weaviate_uuid is None
+    assert isinstance(detail.chunks[1].weaviate_uuid, str)
+
+
+@pytest.mark.asyncio
+async def test_get_document_detail_missing_raises_404(doc_session):
+    with pytest.raises(Exception) as exc:
+        await chat_service.get_document_detail(doc_session, 99999)
+    assert getattr(exc.value, "status_code", None) == 404
+
+
+@pytest.mark.asyncio
+async def test_get_document_endpoint_returns_chunks(user_client_db):
+    client, session_maker = user_client_db
+    doc_id = await _seed_document(
+        session_maker,
+        chunks=[(0, "Đoạn không", True), (1, "Đoạn một", False)],
+    )
+
+    resp = await client.get(f"/api/v1/chat/documents/{doc_id}")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == doc_id
+    assert body["filename"] == "bang-hoc-phi.pdf"
+    assert body["page_count"] == 9
+    assert body["chunk_count"] == 2
+    assert [c["chunk_index"] for c in body["chunks"]] == [0, 1]
+    assert body["chunks"][0]["content"] == "Đoạn không"
+    assert isinstance(body["chunks"][0]["weaviate_uuid"], str)
+    assert body["chunks"][1]["weaviate_uuid"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_document_endpoint_missing_returns_404(user_client):
+    resp = await user_client.get("/api/v1/chat/documents/99999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_document_endpoint_requires_auth(client):
+    resp = await client.get("/api/v1/chat/documents/1")
+    assert resp.status_code == 401

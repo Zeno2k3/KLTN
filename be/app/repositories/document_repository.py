@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.document import Document, DocumentChunk
 
@@ -18,6 +19,19 @@ async def list_all(db: AsyncSession) -> list[Document]:
 
 async def get_by_id(db: AsyncSession, document_id: int) -> Document | None:
     return await db.get(Document, document_id)
+
+
+async def get_with_chunks(db: AsyncSession, document_id: int) -> Document | None:
+    """Tài liệu kèm toàn bộ chunk (eager-load, sắp theo ``chunk_index``) — cho bảng trích dẫn.
+
+    Dùng ``selectinload`` để nạp ``chunks`` trong cùng greenlet (tránh lazy-load chặn ngoài
+    event loop). Quan hệ ``Document.chunks`` đã ``order_by chunk_index`` nên đúng thứ tự."""
+    stmt = (
+        select(Document)
+        .where(Document.id == document_id)
+        .options(selectinload(Document.chunks))
+    )
+    return await db.scalar(stmt)
 
 
 async def create(db: AsyncSession, document: Document) -> Document:

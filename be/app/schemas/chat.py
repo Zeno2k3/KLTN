@@ -14,6 +14,12 @@ class AskRequest(BaseModel):
     conversation_id: int | None = None
 
 
+class RenameConversationRequest(BaseModel):
+    """Yêu cầu đổi tên hội thoại."""
+
+    title: str = Field(min_length=1, max_length=255)
+
+
 class SourceOut(BaseModel):
     """Một nguồn trích dẫn (chunk tài liệu) đã dùng để trả lời."""
 
@@ -56,3 +62,21 @@ class ConversationDetail(BaseModel):
     id: int
     title: str
     messages: list[MessageOut] = []
+
+
+class DocumentChunkOut(BaseModel):
+    """Một đoạn (chunk) text của tài liệu — để hiển thị trong bảng trích dẫn."""
+
+    chunk_index: int
+    content: str
+    weaviate_uuid: str | None = None
+
+
+class DocumentDetailOut(BaseModel):
+    """Tài liệu + toàn bộ đoạn text (mở khi bấm chip nguồn). Chỉ đọc, không kèm vector."""
+
+    id: int
+    filename: str
+    page_count: int | None = None
+    chunk_count: int
+    chunks: list[DocumentChunkOut] = []

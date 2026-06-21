@@ -67,10 +67,28 @@ class Settings(BaseSettings):
     hybrid_alpha: float = 0.6
     retrieval_top_k: int = 30  # số ứng viên sau hybrid+RRF, trước khi rerank
 
-    # Cross-encoder rerank (chạy local qua sentence-transformers, giữ PII trên máy).
-    # Đổi sang "BAAI/bge-reranker-v2-m3" để A/B bằng RAGAS.
-    rerank_model: str = "namdp-ptit/ViRanker"
+    # Reranker. provider="cohere" → API đa ngữ (0 RAM, nhanh; mặc định vì ViRanker 2.2GB
+    # không nạp nổi trên máy RAM thấp → segfault). provider="sentence-transformers" → local.
+    rerank_provider: str = "cohere"  # "cohere" | "sentence-transformers"
+    # Tên model THEO provider: Cohere → "rerank-multilingual-v3.0"; local → "namdp-ptit/ViRanker".
+    rerank_model: str = "rerank-multilingual-v3.0"
     rerank_top_n: int = 6  # số chunk cuối cùng đưa vào LLM
+    cohere_api_key: str = ""  # bắt buộc khi provider="cohere" (lấy ở dashboard.cohere.com)
+
+    # Nạp sẵn (warm-up) reranker lúc startup. CHỈ cần cho reranker LOCAL (nạp model); với
+    # Cohere API để False (tránh tốn 1 call thừa). Tắt ở test/CI.
+    rerank_warmup: bool = False
+    # Số luồng CPU cho cross-encoder LOCAL (0 = giữ mặc định torch). Không áp cho Cohere.
+    rerank_num_threads: int = 0
+
+    # HuggingFace Hub (CHỈ dùng khi provider="sentence-transformers"). Sau khi pre-download về
+    # cache, bật offline để khởi tạo chỉ đọc đĩa thay vì gọi mạng.
+    hf_home: str = ""  # thư mục cache model (rỗng = mặc định ~/.cache/huggingface)
+    hf_token: str = ""  # tùy chọn: hết warning "unauthenticated" + tải nhanh hơn lần đầu
+    hf_hub_offline: bool = False  # True SAU KHI đã có cache: khởi tạo không chạm mạng
+
+    # Timeout (giây) cho toàn pipeline RAG; vượt → 503 thân thiện thay vì treo vô hạn.
+    rag_timeout_seconds: float = 60.0
 
     # Arize Phoenix (tracing LLM/embedding qua OTEL). Tắt → không khởi tạo tracing.
     phoenix_enabled: bool = True

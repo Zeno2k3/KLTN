@@ -15,10 +15,17 @@ from dataclasses import dataclass, field
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.base import MessageSender
 from app.rag import query_engine
-from app.repositories import conversation_repository
-from app.schemas.chat import ConversationDetail, ConversationSummary, MessageOut
+from app.repositories import conversation_repository, document_repository
+from app.schemas.chat import (
+    ConversationDetail,
+    ConversationSummary,
+    DocumentChunkOut,
+    DocumentDetailOut,
+    MessageOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +75,24 @@ async def ask(
         content=question,
     )
 
-    # Chạy pipeline RAG (chặn → thread).
-    result = await asyncio.to_thread(query_engine.answer_question, question)
+    # Chạy pipeline RAG (chặn → thread) kèm timeout: vượt ngưỡng → 503 thân thiện thay vì
+    # treo vô hạn. Lưu ý: wait_for hủy phần CHỜ, thread nền vẫn chạy nốt (không hủy được
+    # thread) — chấp nhận được vì chỉ là không trả về cho client.
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(query_engine.answer_question, question),
+            timeout=settings.rag_timeout_seconds,
+        )
+    except TimeoutError:
+        logger.warning(
+            "RAG timeout sau %.0fs (user_id=%s) — trả 503.",
+            settings.rag_timeout_seconds,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Hệ thống đang xử lý lâu hơn dự kiến, vui lòng thử lại sau giây lát.",
+        ) from None
 
     # Lưu câu trả lời assistant + nguồn trích dẫn + trace id.
     await conversation_repository.add_message(
@@ -135,3 +158,75 @@ async def get_conversation(
             for message in messages
         ],
     )
+
+
+async def get_document_detail(db: AsyncSession, document_id: int) -> DocumentDetailOut:
+    """Tài liệu + toàn bộ đoạn text (cho bảng trích dẫn khi bấm chip nguồn).
+
+    Chỉ đọc dữ liệu đã lưu (không truy vấn vector). 404 nếu tài liệu không tồn tại. Tài liệu
+    chưa có chunk (đang xử lý / đã xoá vector) trả ``chunks: []`` để UI hiện trạng thái rỗng."""
+    document = await document_repository.get_with_chunks(db, document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài liệu."
+        )
+    return DocumentDetailOut(
+        id=document.id,
+        filename=document.filename,
+        page_count=document.page_count,
+        chunk_count=len(document.chunks),
+        chunks=[
+            DocumentChunkOut(
+                chunk_index=chunk.chunk_index,
+                content=chunk.content,
+                weaviate_uuid=str(chunk.weaviate_uuid) if chunk.weaviate_uuid else None,
+            )
+            for chunk in document.chunks
+        ],
+    )
+
+
+async def _owned_or_404(db: AsyncSession, *, user_id: int, conversation_id: int):
+    """Lấy hội thoại nếu thuộc về ``user_id``, ngược lại raise 404."""
+    conversation = await conversation_repository.get_by_id(db, conversation_id)
+    if conversation is None or conversation.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy hội thoại."
+        )
+    return conversation
+
+
+async def rename_conversation(
+    db: AsyncSession, *, user_id: int, conversation_id: int, title: str
+) -> ConversationSummary:
+    """Đổi tên một hội thoại của người dùng; 404 nếu không thuộc về họ."""
+    title = (title or "").strip()
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Tên không được rỗng."
+        )
+    conversation = await _owned_or_404(
+        db, user_id=user_id, conversation_id=conversation_id
+    )
+    await conversation_repository.update_title(db, conversation, title[:_TITLE_MAX])
+    await db.commit()
+
+    latest = await conversation_repository.latest_message_map(db, [conversation.id])
+    last = latest.get(conversation.id)
+    return ConversationSummary(
+        id=conversation.id,
+        title=conversation.title,
+        updated_at=conversation.updated_at,
+        last_message=last.content[:_SNIPPET_MAX] if last else None,
+    )
+
+
+async def delete_conversation(
+    db: AsyncSession, *, user_id: int, conversation_id: int
+) -> None:
+    """Xóa một hội thoại của người dùng; 404 nếu không thuộc về họ."""
+    conversation = await _owned_or_404(
+        db, user_id=user_id, conversation_id=conversation_id
+    )
+    await conversation_repository.delete(db, conversation)
+    await db.commit()

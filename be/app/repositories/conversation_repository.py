@@ -27,6 +27,23 @@ async def create(
     return conversation
 
 
+async def update_title(
+    db: AsyncSession, conversation: Conversation, new_title: str
+) -> Conversation:
+    """Đổi tiêu đề hội thoại. Flush, KHÔNG commit (tầng service commit)."""
+    conversation.title = new_title
+    db.add(conversation)
+    await db.flush()
+    await db.refresh(conversation)
+    return conversation
+
+
+async def delete(db: AsyncSession, conversation: Conversation) -> None:
+    """Xóa hội thoại (cascade xóa messages/feedback). KHÔNG commit."""
+    await db.delete(conversation)
+    await db.flush()
+
+
 async def add_message(
     db: AsyncSession,
     *,

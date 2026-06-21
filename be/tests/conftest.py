@@ -212,7 +212,8 @@ async def _build_authed_client(monkeypatch, role_name):
         base_url="http://test",
         cookies={deps_mod.ACCESS_COOKIE_NAME: token},
     ) as c:
-        yield c
+        # Trả thêm session_maker để test có thể seed dữ liệu vào ĐÚNG DB của request.
+        yield c, test_session
 
     app.dependency_overrides.clear()
     await engine.dispose()
@@ -285,11 +286,19 @@ async def conv_session():
 
 @pytest_asyncio.fixture
 async def admin_client(monkeypatch):
-    async for c in _build_authed_client(monkeypatch, "admin"):
+    async for c, _ in _build_authed_client(monkeypatch, "admin"):
         yield c
 
 
 @pytest_asyncio.fixture
 async def user_client(monkeypatch):
-    async for c in _build_authed_client(monkeypatch, "user"):
+    async for c, _ in _build_authed_client(monkeypatch, "user"):
         yield c
+
+
+@pytest_asyncio.fixture
+async def user_client_db(monkeypatch):
+    """Như ``user_client`` nhưng trả thêm ``(client, session_maker)`` để seed dữ liệu (tài liệu,
+    chunk…) vào đúng DB SQLite mà request sẽ đọc."""
+    async for pair in _build_authed_client(monkeypatch, "user"):
+        yield pair

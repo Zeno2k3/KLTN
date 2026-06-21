@@ -20,6 +20,7 @@ certifi==2026.6.17
 cffi==2.0.0
 charset-normalizer==3.4.7
 click==8.4.1
+cohere==6.1.0
 colorama==0.4.6
 coverage==7.14.1
 cryptography==49.0.0
@@ -37,6 +38,7 @@ fastapi==0.137.2
 fastapi-cli==0.0.24
 fastapi-cloud-cli==0.20.0
 fastar==0.11.0
+fastavro==1.12.2
 filelock==3.29.0
 filetype==1.2.0
 frozenlist==1.8.0
@@ -66,6 +68,7 @@ llama-index-core==0.14.22
 llama-index-embeddings-openai==0.6.0
 llama-index-instrumentation==0.5.0
 llama-index-llms-openai==0.7.9
+llama-index-postprocessor-cohere-rerank==0.9.0
 llama-index-vector-stores-weaviate==1.6.1
 llama-index-workflows==2.22.0
 lxml==6.1.1
@@ -111,10 +114,10 @@ pyarrow==24.0.0
 pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycparser==3.0
-pydantic==2.13.4
+pydantic==2.12.5
 pydantic-extra-types==2.11.1
 pydantic-settings==2.14.1
-pydantic_core==2.46.4
+pydantic_core==2.41.5
 Pygments==2.20.0
 pypdf==6.13.3
 pytest==9.1.0
@@ -156,6 +159,7 @@ torch==2.12.1+cpu
 tqdm==4.68.3
 transformers==5.12.1
 typer==0.25.1
+types-requests==2.33.0.20260518
 typing-inspect==0.9.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
