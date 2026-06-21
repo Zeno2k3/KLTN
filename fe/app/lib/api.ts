@@ -6,7 +6,7 @@
  * rồi thử lại request gốc.
  */
 
-import type { DocumentDTO } from "@/app/types/admin";
+import type { DocumentDTO, StatRange, StatsDTO } from "@/app/types/admin";
 import type { LoginInput, RegisterInput, User } from "@/app/types/auth";
 import type {
   AskResponseDTO,
@@ -142,6 +142,12 @@ export const documentApi = {
     await ensureOk(res);
     return res.blob();
   },
+};
+
+export const statsApi = {
+  /** Số liệu thống kê admin theo mốc thời gian (24h / 7d / 30d). */
+  get: (range: StatRange) =>
+    apiFetch(`/admin/stats?range=${range}`).then((r) => parse<StatsDTO>(r)),
 };
 
 export const chatApi = {

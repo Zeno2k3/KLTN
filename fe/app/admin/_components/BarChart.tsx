@@ -1,12 +1,12 @@
 import type { ChartBar } from "@/app/types/admin";
 
-/** Biểu đồ cột lượt trò chuyện theo tuần. */
-export default function BarChart({ bars }: { bars: ChartBar[] }) {
+/** Biểu đồ cột lượt trò chuyện theo mốc thời gian; `caption` mô tả khoảng đang xem. */
+export default function BarChart({ bars, caption = "6 mốc gần nhất" }: { bars: ChartBar[]; caption?: string }) {
   return (
     <div className="gw-card gw-card--pad">
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 4 }}>
-        <h2 style={{ fontSize: 17, margin: 0, color: "var(--text-strong)" }}>Lượt trò chuyện theo tuần</h2>
-        <span style={{ fontSize: 13, color: "var(--text-subtle)" }}>6 tuần gần nhất</span>
+        <h2 style={{ fontSize: 17, margin: 0, color: "var(--text-strong)" }}>Lượt trò chuyện</h2>
+        <span style={{ fontSize: 13, color: "var(--text-subtle)" }}>{caption}</span>
       </div>
       <div style={{ display: "flex", alignItems: "flex-end", gap: 14, height: 210, paddingTop: 22 }}>
         {bars.map((b) => (

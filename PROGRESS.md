@@ -2,6 +2,32 @@
 
 ## Đã xong
 
+- (2026-06-21) **P11 — Thống kê admin: bỏ mock, dùng dữ liệu thật + bộ chọn mốc thời gian.**
+  - **Bối cảnh:** tab Thống kê (`/admin`) trước đây hardcode 3/4 thẻ + biểu đồ + chủ đề (mock trong
+    `fe/app/lib/data/admin.ts`, `fe/app/admin/page.tsx`). Nay tổng hợp thật từ Postgres.
+  - **BE — endpoint mới `GET /api/v1/admin/stats?range=24h|7d|30d`** (mặc định 30d, `require_admin`):
+    - `schemas/statistics.py` (`StatRange` Literal, `Metric{value,delta_pct}`, `ChartBucket`,
+      `TopicStat`, `StatsResponse`); `repositories/statistics_repository.py` (COUNT async portable,
+      **không `date_trunc`** → chạy cả SQLite test); `services/statistics_service.py` (cửa sổ
+      thời gian + % so kỳ liền trước, `delta_pct=null` nếu kỳ trước=0; chia **6 bucket đều**, nhãn
+      `HH:mm` cho 24h / `dd/MM` cho 7d-30d); `routes/statistics.py` + đăng ký `router.py`.
+    - Số liệu: Phụ huynh hoạt động (distinct user role=`user` có message `user` trong kỳ),
+      Lượt trò chuyện (conversations), Câu hỏi đã giải đáp (message `assistant`), Tổng tài liệu;
+      Chủ đề = 1 chủ đề "Tư vấn tuyển sinh tiểu học" (= số lượt trò chuyện, theo chốt người dùng).
+  - **FE — bỏ mock + bộ chọn kỳ:** `types/admin.ts` (StatsDTO + `DeltaTone`/`value` cho thẻ/topic),
+    `lib/api.ts` (`statsApi.get`), `hooks/useStats.ts` (fetch theo range), `StatsView.tsx`
+    (`"use client"` + segmented control 24h/7d/30d + map số liệu thật, badge `+%`/`-%`/`mới` đổi màu
+    xanh/đỏ/xám), `AdminStatCard`/`BarChart`/`TopicProgressList` nhận tone/caption/value động;
+    `page.tsx` bỏ mảng stats hardcode; **xoá** `lib/data/admin.ts`.
+  - **Test:** BE **74 passed** (+6: count/delta, 6 bucket, default 30d, empty→0/null, range sai→422,
+    non-admin→403); FE **64 passed** (+`useStats.test.tsx` mount/đổi-range/lỗi, +case `statsApi`).
+    ruff + ESLint + tsc xanh.
+  - **VERIFY THẬT:** curl đăng nhập admin → `GET /admin/stats` 3 mốc HTTP 200 với số thật từ Postgres
+    (30d: PH=1, lượt=5, hỏi=6, tài liệu=2, chart 16/06=5). UI dev (:3001, CORS sẵn) đăng nhập thật,
+    `/admin` hiển thị đúng các số đó; đổi tab 24h/7d/30d → subtitle/caption/biểu đồ đổi (24h chart
+    `[33,0,0,0,33,100]%` khớp API `[1,0,0,0,1,3]`), không lỗi console; đã chụp 3 ảnh.
+  - **Không** migration (chỉ đọc bảng sẵn có) · **không** đụng RAG → không cần rag-eval/RAGAS.
+
 - (2026-06-21) **P10 — Sửa reranking quá lâu / treo hệ thống → chuyển reranker sang Cohere API.**
   - **Chẩn đoán (B0, có số đo):** rerank `namdp-ptit/ViRanker` mất ~5 phút rồi **segfault**
     (ACCESS_VIOLATION 0xC0000005). Nguyên nhân gốc KHÔNG phải mạng (tải file chỉ ~1.2s) mà là

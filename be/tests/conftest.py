@@ -302,3 +302,11 @@ async def user_client_db(monkeypatch):
     chunk…) vào đúng DB SQLite mà request sẽ đọc."""
     async for pair in _build_authed_client(monkeypatch, "user"):
         yield pair
+
+
+@pytest_asyncio.fixture
+async def admin_client_db(monkeypatch):
+    """Như ``admin_client`` nhưng trả thêm ``(client, session_maker)`` để seed dữ liệu
+    (phụ huynh, hội thoại, tin nhắn…) vào đúng DB mà request admin sẽ đọc — cho test thống kê."""
+    async for pair in _build_authed_client(monkeypatch, "admin"):
+        yield pair

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, chatApi, documentApi } from "./api";
+import { ApiError, chatApi, documentApi, statsApi } from "./api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -30,6 +30,31 @@ describe("documentApi.fetchFile", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(documentApi.fetchFile(9)).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("statsApi.get", () => {
+  it("GET /admin/stats kèm query range", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          range: "7d",
+          active_parents: { value: 0, delta_pct: null },
+          conversations: { value: 0, delta_pct: null },
+          answered_questions: { value: 0, delta_pct: null },
+          total_documents: 0,
+          chart: [],
+          topic: { label: "Tư vấn tuyển sinh tiểu học", count: 0 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await statsApi.get("7d");
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/admin/stats?range=7d");
+    expect(out.range).toBe("7d");
   });
 });
 
