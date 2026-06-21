@@ -16,13 +16,14 @@ def _node(text, doc_id, filename, uuid, score):
 
 
 def test_answer_question_reranks_builds_sources_and_calls_llm(monkeypatch):
+    # Tách router/rewrite ra khỏi test này (tập trung kiểm retrieve→rerank→synthesize).
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
     candidates = [
         _node(f"đoạn nội dung {i}", 1, "quy-che.pdf", f"uuid-{i}", 0.5 + i)
         for i in range(10)
     ]
-    monkeypatch.setattr(
-        query_engine, "hybrid_retrieve", lambda q, k, f: candidates
-    )
+    monkeypatch.setattr(query_engine, "hybrid_retrieve", lambda q, k, f: candidates)
 
     class FakeReranker:
         def postprocess_nodes(self, nodes, query_str=None):
@@ -76,6 +77,8 @@ def test_sources_score_is_json_serializable():
 
 
 def test_answer_question_short_circuits_without_context(monkeypatch):
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
     monkeypatch.setattr(query_engine, "hybrid_retrieve", lambda q, k, f: [])
 
     def _boom():
@@ -90,6 +93,8 @@ def test_answer_question_short_circuits_without_context(monkeypatch):
 
 
 def test_answer_question_excludes_metadata_from_snippet(monkeypatch):
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
     # snippet/ngữ cảnh dùng text THUẦN, không lẫn "document_id: ..." vào câu trả lời.
     node = _node("Nội dung thuần tuý", 7, "a.pdf", "uuid-x", 1.0)
     monkeypatch.setattr(query_engine, "hybrid_retrieve", lambda q, k, f: [node])
@@ -105,11 +110,78 @@ def test_answer_question_excludes_metadata_from_snippet(monkeypatch):
         query_engine,
         "_get_llm",
         lambda: SimpleNamespace(
-            chat=lambda messages: captured.update(messages=messages)
-            or SimpleNamespace(message=SimpleNamespace(content="ok"))
+            chat=lambda messages: (
+                captured.update(messages=messages)
+                or SimpleNamespace(message=SimpleNamespace(content="ok"))
+            )
         ),
     )
 
     result = query_engine.answer_question("hỏi")
     assert result.sources[0]["snippet"] == "Nội dung thuần tuý"
     assert "document_id" not in captured["messages"][1].content
+
+
+# --- Tiền xử lý: Router (rag/direct) + Query Rewriting ---
+
+
+def test_answer_question_direct_route_short_circuits(monkeypatch):
+    # Router='direct' → trả lời thẳng, KHÔNG retrieve/rerank/synthesize, sources rỗng.
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", True)
+    monkeypatch.setattr(query_engine, "route_query", lambda q, h: "direct")
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("Đường 'direct' không được retrieve")
+
+    monkeypatch.setattr(query_engine, "retrieve_and_rerank", _boom)
+    monkeypatch.setattr(
+        query_engine,
+        "_get_llm",
+        lambda: SimpleNamespace(
+            chat=lambda messages: SimpleNamespace(
+                message=SimpleNamespace(content="Chào phụ huynh, tôi là LuminaAI!")
+            )
+        ),
+    )
+
+    result = query_engine.answer_question("xin chào", history=[])
+    assert result.sources == []
+    assert result.answer == "Chào phụ huynh, tôi là LuminaAI!"
+
+
+def test_answer_question_rag_route_retrieves_with_rewritten_query(monkeypatch):
+    # Router='rag' + có lịch sử → retrieve nhận CÂU ĐÃ VIẾT LẠI (không phải câu follow-up gốc).
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", True)
+    monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", True)
+    monkeypatch.setattr(query_engine, "route_query", lambda q, h: "rag")
+    monkeypatch.setattr(
+        query_engine,
+        "rewrite_query",
+        lambda q, h: "Học phí trường Lumina là bao nhiêu?",
+    )
+
+    seen: dict = {}
+
+    def _fake_retrieve(query, filters=None):
+        seen["query"] = query
+        return [_node("nội dung học phí", 1, "a.pdf", "u1", 1.0)]
+
+    monkeypatch.setattr(query_engine, "retrieve_and_rerank", _fake_retrieve)
+    monkeypatch.setattr(
+        query_engine,
+        "_get_llm",
+        lambda: SimpleNamespace(
+            chat=lambda messages: SimpleNamespace(
+                message=SimpleNamespace(content="Học phí là 2 triệu/tháng [1].")
+            )
+        ),
+    )
+
+    history = [
+        {"role": "user", "content": "Trường Lumina tuyển sinh khi nào?"},
+        {"role": "assistant", "content": "Từ tháng 7."},
+    ]
+    result = query_engine.answer_question("thế còn học phí?", history=history)
+    assert seen["query"] == "Học phí trường Lumina là bao nhiêu?"
+    assert result.answer == "Học phí là 2 triệu/tháng [1]."
+    assert result.sources[0]["filename"] == "a.pdf"

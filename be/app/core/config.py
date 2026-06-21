@@ -67,13 +67,29 @@ class Settings(BaseSettings):
     hybrid_alpha: float = 0.6
     retrieval_top_k: int = 30  # số ứng viên sau hybrid+RRF, trước khi rerank
 
+    # Tiền xử lý truy vấn (chạy TRƯỚC retrieve, trong cùng span rag.answer).
+    # - Router: phân loại câu hỏi "rag" (cần tài liệu) vs "direct" (chào hỏi/ngoài phạm vi → LLM
+    #   trả lời thẳng, không truy hồi) → chặn câu lạc đề bị kéo nhầm chunk tương đồng.
+    # - Rewrite (condense-question): viết lại câu follow-up thành câu độc lập theo lịch sử để
+    #   truy hồi đúng (giải bài toán hội thoại đa lượt). Chỉ chạy khi có lịch sử.
+    query_router_enabled: bool = True
+    query_rewrite_enabled: bool = True
+    # Sliding window: số message gần nhất của hội thoại đưa vào router/rewriter (bao token).
+    chat_history_window: int = 5
+    # Model RIÊNG từng bước (rỗng → fallback openai_chat_model). Để sau này gắn model rẻ/nhanh cho
+    # router/rewriter mà không đụng model synthesize chính. KHÔNG dùng singleton LLM chung.
+    router_model: str = ""
+    rewrite_model: str = ""
+
     # Reranker. provider="cohere" → API đa ngữ (0 RAM, nhanh; mặc định vì ViRanker 2.2GB
     # không nạp nổi trên máy RAM thấp → segfault). provider="sentence-transformers" → local.
     rerank_provider: str = "cohere"  # "cohere" | "sentence-transformers"
     # Tên model THEO provider: Cohere → "rerank-multilingual-v3.0"; local → "namdp-ptit/ViRanker".
     rerank_model: str = "rerank-multilingual-v3.0"
     rerank_top_n: int = 6  # số chunk cuối cùng đưa vào LLM
-    cohere_api_key: str = ""  # bắt buộc khi provider="cohere" (lấy ở dashboard.cohere.com)
+    cohere_api_key: str = (
+        ""  # bắt buộc khi provider="cohere" (lấy ở dashboard.cohere.com)
+    )
 
     # Nạp sẵn (warm-up) reranker lúc startup. CHỈ cần cho reranker LOCAL (nạp model); với
     # Cohere API để False (tránh tốn 1 call thừa). Tắt ở test/CI.
@@ -84,7 +100,9 @@ class Settings(BaseSettings):
     # HuggingFace Hub (CHỈ dùng khi provider="sentence-transformers"). Sau khi pre-download về
     # cache, bật offline để khởi tạo chỉ đọc đĩa thay vì gọi mạng.
     hf_home: str = ""  # thư mục cache model (rỗng = mặc định ~/.cache/huggingface)
-    hf_token: str = ""  # tùy chọn: hết warning "unauthenticated" + tải nhanh hơn lần đầu
+    hf_token: str = (
+        ""  # tùy chọn: hết warning "unauthenticated" + tải nhanh hơn lần đầu
+    )
     hf_hub_offline: bool = False  # True SAU KHI đã có cache: khởi tạo không chạm mạng
 
     # Timeout (giây) cho toàn pipeline RAG; vượt → 503 thân thiện thay vì treo vô hạn.

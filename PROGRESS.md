@@ -2,6 +2,39 @@
 
 ## Đã xong
 
+- (2026-06-22) **P12 — RAG tiền xử lý truy vấn: LLM Router (rag/direct) + Query Rewriting (condense-question).**
+  - **Bối cảnh:** pipeline xử lý mỗi câu độc lập, không truyền lịch sử → (1) follow-up đa lượt
+    ("thế còn học phí?") truy hồi sai; (2) câu ngoài phạm vi vẫn được trả lời do embedding tương đồng.
+  - **Giải pháp — 2 bước tiền xử lý TRƯỚC retrieve, trong cùng span `rag.answer` (1 trace_id):**
+    - **Router** `be/app/rag/query_router.py` (`route_query`): phân loại nhị phân `rag` | `direct`
+      (LLM riêng `router_model`, fallback `openai_chat_model`); câu chào hỏi/ngoài phạm vi → `direct`
+      (không retrieve). Default an toàn `rag` khi parse lỗi; module tự chứa (không import query_engine).
+    - **Rewriter** `be/app/rag/query_rewriter.py` (`rewrite_query`): viết lại follow-up thành câu
+      ĐỘC LẬP theo lịch sử (sliding window 5 tin). Bỏ qua khi history rỗng. LLM riêng `rewrite_model`.
+    - **query_engine** `answer_question(query_text, history=None, filters=None)`: router → nếu
+      `direct` trả `_answer_direct` (prompt "tùy loại": chào hỏi đáp tự nhiên / lạc đề từ chối lịch
+      sự, `sources=[]`); nếu `rag` (+history) → rewrite → retrieve+synthesize dùng **câu đã viết lại**.
+      Span attrs `rag.route`, `rag.rewritten_query`.
+    - **chat_service.ask**: fetch `list_messages` TRƯỚC khi lưu câu hỏi mới (câu hiện tại không lọt
+      history), prune sliding window `chat_history_window`, truyền `history=` (keyword) vào engine.
+    - **config.py**: `query_router_enabled=True`, `query_rewrite_enabled=True`, `chat_history_window=5`,
+      `router_model=""`, `rewrite_model=""` (seam swap model từng bước — KHÔNG dùng singleton LLM chung).
+  - **Quyết định chốt:** ngoài phạm vi xử lý "tùy loại"; tách 2 lời gọi LLM (router→rewrite);
+    synthesize dùng câu đã viết lại; mỗi bước 1 LLM/model riêng.
+  - **Test:** **86 passed** (+ `test_query_router.py`, `test_query_rewriter.py`, +2 routing test ở
+    `test_query_engine.py`, +1 history test ở `test_chat.py`; cập nhật mock cũ nhận `history`).
+    ruff + pytest xanh.
+  - **VERIFY THẬT (LLM thật, `eval/verify_router_rewrite.py`):** Router: "cách nấu canh chua"→direct,
+    "Xin chào, bạn là ai?"→direct, "Hồ sơ lớp 1..."→rag. Rewrite: "thế còn học phí?" + lịch sử Lumina
+    → "Học phí của Trường Tiểu học Lumina là bao nhiêu?". Direct ngoài phạm vi ("Thủ đô Pháp") từ chối
+    lịch sự, sources=[]. Full RAG đa lượt: lượt 1 trả "6 tuổi" có nguồn, lượt 2 follow-up dùng câu
+    viết lại; trace gửi Phoenix (`trace_id=17e09160...`).
+  - **RAGAS:** không cài được trên Py3.14 (chỉ 1 venv `be/.venv`) → eval thủ công thay thế
+    (`eval/verify_router_on_dataset.py`): Router phân loại **8/8** câu dataset = `rag`, **0 false-direct**
+    → không hồi quy luồng RAG (single-turn: history rỗng ⇒ rewrite bỏ qua ⇒ retrieval y hệt baseline).
+  - **Không** migration (route/rewritten_query chỉ ghi qua Phoenix span attr) · **không** đổi FE
+    (`sources` vốn optional; direct trả `sources=[]`).
+
 - (2026-06-21) **P11 — Thống kê admin: bỏ mock, dùng dữ liệu thật + bộ chọn mốc thời gian.**
   - **Bối cảnh:** tab Thống kê (`/admin`) trước đây hardcode 3/4 thẻ + biểu đồ + chủ đề (mock trong
     `fe/app/lib/data/admin.ts`, `fe/app/admin/page.tsx`). Nay tổng hợp thật từ Postgres.

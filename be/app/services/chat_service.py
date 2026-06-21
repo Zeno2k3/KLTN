@@ -67,6 +67,14 @@ async def ask(
                 detail="Không tìm thấy hội thoại.",
             )
 
+    # Lấy lịch sử hội thoại (sliding window) TRƯỚC khi lưu câu hỏi mới — để câu hiện tại KHÔNG
+    # lọt vào ngữ cảnh router/rewriter. Hội thoại vừa tạo chưa có message → rỗng.
+    prior = await conversation_repository.list_messages(db, conversation.id)
+    history = [
+        {"role": message.sender_type.value, "content": message.content}
+        for message in prior
+    ][-settings.chat_history_window :]
+
     # Lưu câu hỏi của người dùng trước.
     await conversation_repository.add_message(
         db,
@@ -80,7 +88,7 @@ async def ask(
     # thread) — chấp nhận được vì chỉ là không trả về cho client.
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(query_engine.answer_question, question),
+            asyncio.to_thread(query_engine.answer_question, question, history=history),
             timeout=settings.rag_timeout_seconds,
         )
     except TimeoutError:

@@ -17,7 +17,7 @@ from app.services import chat_service
 def _fake_answer(
     answer="Trường nhận hồ sơ từ tháng 7 [1].", sources=None, trace_id="trace-1"
 ):
-    def _impl(question, filters=None):
+    def _impl(question, history=None, filters=None):
         return query_engine.AnswerResult(
             answer=answer,
             sources=sources
@@ -49,6 +49,36 @@ async def test_service_persists_user_and_assistant_messages(conv_session, monkey
         {"index": 1, "document_id": 1, "filename": "quy-che.pdf"}
     ]
     assert msgs[1].trace_id == "trace-1"
+
+
+@pytest.mark.asyncio
+async def test_service_passes_pruned_history_to_engine(conv_session, monkeypatch):
+    """Service truyền lịch sử (sliding window) vào engine, KHÔNG gồm câu hỏi hiện tại.
+
+    Lượt 1 (hội thoại mới) → history rỗng. Lượt 2 (nối tiếp) → đúng các tin trước đó."""
+    session, user_id = conv_session
+    captured: dict = {}
+
+    def _impl(question, history=None, filters=None):
+        captured["history"] = history
+        return query_engine.AnswerResult(answer="ok", sources=[], trace_id=None)
+
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _impl)
+    monkeypatch.setattr(chat_service.settings, "chat_history_window", 5)
+
+    out = await chat_service.ask(session, user_id=user_id, question="Câu một?")
+    assert captured["history"] == []  # hội thoại mới → chưa có lịch sử
+
+    await chat_service.ask(
+        session,
+        user_id=user_id,
+        question="Câu hai?",
+        conversation_id=out.conversation_id,
+    )
+    # Lịch sử = 2 tin của lượt 1 (user + assistant), KHÔNG chứa "Câu hai?".
+    assert [h["role"] for h in captured["history"]] == ["user", "assistant"]
+    assert [h["content"] for h in captured["history"]] == ["Câu một?", "ok"]
+    assert all("Câu hai?" != h["content"] for h in captured["history"])
 
 
 @pytest.mark.asyncio
@@ -86,7 +116,7 @@ async def test_service_raises_503_on_rag_timeout(conv_session, monkeypatch):
     """RAG vượt ``rag_timeout_seconds`` → HTTPException 503 thay vì treo vô hạn."""
     session, user_id = conv_session
 
-    def _slow(question, filters=None):
+    def _slow(question, history=None, filters=None):
         time.sleep(0.2)  # lâu hơn timeout đặt bên dưới
         return query_engine.AnswerResult(answer="muộn", sources=[], trace_id=None)
 
@@ -148,7 +178,9 @@ def test_get_reranker_cohere_uses_api_key_and_model(monkeypatch):
     monkeypatch.setattr(cohere_mod, "CohereRerank", _FakeCohere)
     monkeypatch.setattr(query_engine, "_reranker", None)
     monkeypatch.setattr(query_engine.settings, "rerank_provider", "cohere")
-    monkeypatch.setattr(query_engine.settings, "rerank_model", "rerank-multilingual-v3.0")
+    monkeypatch.setattr(
+        query_engine.settings, "rerank_model", "rerank-multilingual-v3.0"
+    )
     monkeypatch.setattr(query_engine.settings, "rerank_top_n", 6)
     monkeypatch.setattr(query_engine.settings, "cohere_api_key", "test-key")
 

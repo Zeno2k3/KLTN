@@ -26,6 +26,8 @@ from llama_index.llms.openai import OpenAI
 from opentelemetry import trace
 
 from app.core.config import settings
+from app.rag.query_rewriter import rewrite_query
+from app.rag.query_router import ROUTE_DIRECT, route_query
 from app.rag.retriever import hybrid_retrieve
 
 if TYPE_CHECKING:
@@ -48,6 +50,7 @@ Bạn là trợ lý tư vấn tuyển sinh tiểu học của [TÊN TRƯỜNG/H�
 - Mốc thời gian, hạn nộp hồ sơ, học phí, độ tuổi, số liệu: trích đúng nguyên văn từ nguồn, KHÔNG làm tròn, KHÔNG diễn giải lại.
 
 # PHONG CÁCH
+- chatbot xưng hô là LuminaAI.
 - Xưng hô với user là phụ huynh.
 - Trả lời bằng tiếng Việt, ngắn gọn, rõ ràng, dễ hiểu với phụ huynh không chuyên môn.
 - Giọng thân thiện, tôn trọng, đồng cảm — phụ huynh thường lo lắng về việc học của con.
@@ -62,6 +65,20 @@ _NO_CONTEXT_ANSWER = (
     "Xin lỗi, hiện chưa tìm thấy tài liệu phù hợp để trả lời câu hỏi này. "
     "Phụ huynh vui lòng liên hệ trực tiếp nhà trường để được hỗ trợ chính xác."
 )
+
+# Prompt cho đường "direct" (router phân loại không cần tài liệu): xử lý "tùy loại" — chào hỏi đáp
+# tự nhiên; câu ngoài phạm vi thì lịch sự từ chối + mời hỏi đúng chủ đề. KHÔNG truy hồi, sources=[].
+_DIRECT_SYSTEM_PROMPT = """\
+Bạn là LuminaAI, trợ lý tư vấn tuyển sinh tiểu học, đang trò chuyện với phụ huynh.
+
+Câu hỏi hiện tại KHÔNG cần tra cứu tài liệu. Hãy xử lý tự nhiên:
+- Nếu là chào hỏi, cảm ơn, hỏi bạn là ai / giúp được gì: đáp lại ngắn gọn, thân thiện, và mời phụ
+  huynh đặt câu hỏi về tuyển sinh tiểu học (hồ sơ, học phí, độ tuổi, tuyến, mốc thời gian...).
+- Nếu câu hỏi NẰM NGOÀI phạm vi tuyển sinh tiểu học (nấu ăn, thể thao, cấp học khác, kiến thức
+  chung...): lịch sự cho biết bạn chỉ hỗ trợ về tuyển sinh tiểu học và gợi ý phụ huynh hỏi đúng
+  chủ đề. KHÔNG cố trả lời nội dung ngoài phạm vi.
+
+Trả lời bằng tiếng Việt, ngắn gọn, lịch sự. Xưng "LuminaAI", gọi người dùng là "phụ huynh"."""
 
 # Singleton (model rerank nặng → khởi tạo 1 lần). Bọc trong hàm để mock/được lazy-import.
 _reranker: Any = None
@@ -226,21 +243,65 @@ def synthesize(
     return (response.message.content or "").strip(), sources
 
 
-def answer_question(query_text: str, filters: Any = None) -> AnswerResult:
-    """Trả lời 1 câu hỏi: hybrid retrieve → rerank → LLM tổng hợp (đồng bộ, chặn).
+def _answer_direct(query_text: str, history: list[dict] | None = None) -> str:
+    """Trả lời thẳng (không retrieve) cho chào hỏi / câu ngoài phạm vi.
 
-    ``filters`` là ``MetadataFilters`` LlamaIndex (tuỳ chọn) để thu hẹp truy hồi."""
+    Đưa cả lịch sử (sliding window đã prune ở service) vào để đáp tự nhiên trong mạch hội thoại.
+    Tầng gọi đặt ``sources=[]`` cho đường này."""
+    messages = [ChatMessage(role=MessageRole.SYSTEM, content=_DIRECT_SYSTEM_PROMPT)]
+    for message in history or []:
+        role = (
+            MessageRole.USER if message.get("role") == "user" else MessageRole.ASSISTANT
+        )
+        messages.append(ChatMessage(role=role, content=message.get("content") or ""))
+    messages.append(ChatMessage(role=MessageRole.USER, content=query_text))
+    response = _get_llm().chat(messages)
+    return (response.message.content or "").strip()
+
+
+def answer_question(
+    query_text: str,
+    history: list[dict] | None = None,
+    filters: Any = None,
+) -> AnswerResult:
+    """Trả lời 1 câu hỏi (đồng bộ, chặn). Trước retrieve có 2 bước tiền xử lý (cùng span):
+
+    1. Router (``rag`` | ``direct``): câu chào hỏi / ngoài phạm vi → trả lời thẳng, không retrieve.
+    2. Rewrite (condense-question): khi là ``rag`` VÀ có lịch sử → viết lại câu follow-up thành câu
+       độc lập; dùng cho cả truy hồi lẫn synthesize.
+
+    ``history``: list ``{"role": "user"|"assistant", "content": str}`` đã prune sliding window ở
+    tầng service. ``filters`` là ``MetadataFilters`` LlamaIndex (tuỳ chọn) để thu hẹp truy hồi."""
+    history = history or []
     tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span("rag.answer") as span:
         span.set_attribute("rag.query", query_text)
         trace_id = _current_trace_id()
 
-        reranked = retrieve_and_rerank(query_text, filters)
+        # Router: chặn câu ngoài phạm vi TRƯỚC khi tốn retrieve/rerank.
+        route = "rag"
+        if settings.query_router_enabled:
+            route = route_query(query_text, history)
+        span.set_attribute("rag.route", route)
+        if route == ROUTE_DIRECT:
+            return AnswerResult(
+                answer=_answer_direct(query_text, history),
+                sources=[],
+                trace_id=trace_id,
+            )
+
+        # Rewrite chỉ khi có lịch sử → câu độc lập cho retrieve + synthesize.
+        effective_query = query_text
+        if settings.query_rewrite_enabled and history:
+            effective_query = rewrite_query(query_text, history)
+        span.set_attribute("rag.rewritten_query", effective_query)
+
+        reranked = retrieve_and_rerank(effective_query, filters)
         span.set_attribute("rag.reranked", len(reranked))
         if not reranked:
             return AnswerResult(
                 answer=_NO_CONTEXT_ANSWER, sources=[], trace_id=trace_id
             )
 
-        answer, sources = synthesize(query_text, reranked)
+        answer, sources = synthesize(effective_query, reranked)
         return AnswerResult(answer=answer, sources=sources, trace_id=trace_id)
