@@ -166,6 +166,60 @@ export function useChat(userName: string = USER_NAME) {
     setTyping(false);
   }, [newCount]);
 
+  // Đổi tên hội thoại: cập nhật lạc quan, gọi backend nếu đã có serverId; lỗi → khôi phục.
+  const renameConvo = useCallback(
+    async (id: string, title: string) => {
+      const next = title.trim();
+      const target = convos.find((c) => c.id === id);
+      if (!target || !next || next === target.title) return;
+      const prevTitle = target.title;
+      setConvos((prev) =>
+        prev.map((c): Convo => (c.id === id ? { ...c, title: next } : c)),
+      );
+      if (target.serverId === null) return; // draft chưa gửi — chỉ đổi local
+      try {
+        await chatApi.renameConversation(target.serverId, next);
+      } catch (e) {
+        setConvos((prev) =>
+          prev.map((c): Convo => (c.id === id ? { ...c, title: prevTitle } : c)),
+        );
+        setError(
+          e instanceof ApiError ? e.message : "Không đổi được tên hội thoại.",
+        );
+      }
+    },
+    [convos],
+  );
+
+  // Xóa hội thoại: gọi backend nếu đã có serverId; xóa cuộc đang mở → mở cuộc mới trống.
+  const deleteConvo = useCallback(
+    async (id: string) => {
+      const target = convos.find((c) => c.id === id);
+      if (!target) return;
+      if (target.serverId !== null) {
+        try {
+          await chatApi.deleteConversation(target.serverId);
+        } catch (e) {
+          setError(e instanceof ApiError ? e.message : "Không xóa được hội thoại.");
+          return;
+        }
+      }
+      setError(null);
+      if (id === activeId) {
+        // Cuộc đang mở bị xóa → tạo cuộc trò chuyện mới trống và chuyển sang.
+        const newId = "new-" + newCount;
+        setNewCount((n) => n + 1);
+        setConvos((prev) => [freshConvo(newId), ...prev.filter((c) => c.id !== id)]);
+        setActiveId(newId);
+        setText("");
+        setTyping(false);
+      } else {
+        setConvos((prev) => prev.filter((c) => c.id !== id));
+      }
+    },
+    [convos, activeId, newCount],
+  );
+
   const greetingText = `Xin chào buổi ${partOfDay()}, ${userName} 👋`;
   const greetingSub =
     "Mình là LuminaAi — trợ lý tư vấn tuyển sinh lớp 1. Mình giúp gì cho bé nhà mình hôm nay ạ?";
@@ -183,6 +237,8 @@ export function useChat(userName: string = USER_NAME) {
     send,
     openConvo,
     newChat,
+    renameConvo,
+    deleteConvo,
     greetingText,
     greetingSub,
   };

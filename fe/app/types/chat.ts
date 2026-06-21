@@ -5,6 +5,8 @@ export type Source = {
   index: number | null;
   document_id: number | null;
   filename: string | null;
+  /** UUID chunk trong Weaviate — khớp `DocumentChunk.weaviate_uuid` để tô sáng đúng đoạn trong drawer. */
+  weaviate_uuid: string | null;
   snippet: string | null;
   score: number | null;
 };
@@ -64,4 +66,20 @@ export type ConversationDetailDTO = {
   id: number;
   title: string;
   messages: MessageDTO[];
+};
+
+/** Một đoạn text của tài liệu (cho bảng trích dẫn). */
+export type DocumentChunkDTO = {
+  chunk_index: number;
+  content: string;
+  weaviate_uuid: string | null;
+};
+
+/** Tài liệu + toàn bộ đoạn text — trả từ GET /chat/documents/{id}. */
+export type DocumentDetailDTO = {
+  id: number;
+  filename: string;
+  page_count: number | null;
+  chunk_count: number;
+  chunks: DocumentChunkDTO[];
 };

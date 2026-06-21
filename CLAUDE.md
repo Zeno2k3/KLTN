@@ -43,6 +43,7 @@ Một tính năng chỉ "Xong" khi HỘI ĐỦ:
 3. Mỗi tính năng mới đi kèm ÍT NHẤT một test bao phủ đường code đó (đỏ-trước-khi-sửa,
    xanh-sau-khi-sửa). Không thêm code mới mà bỏ trống test.
 4. Bằng chứng (output lệnh / ảnh / trace) đã được mở và đưa cho người dùng xem.
+5. Luôn trả lời bằng bằng tiếng việt.
 
 Nếu thiếu bất kỳ mục nào ở trên: CHƯA xong — nói rõ mục nào thiếu, đừng tuyên bố hoàn thành.
 

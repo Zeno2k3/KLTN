@@ -18,6 +18,7 @@ export function sourceFromDTO(dto: SourceDTO): Source {
     index: dto.index,
     document_id: dto.document_id,
     filename: dto.filename,
+    weaviate_uuid: dto.weaviate_uuid,
     snippet: dto.snippet,
     score: dto.score,
   };

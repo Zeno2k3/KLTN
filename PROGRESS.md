@@ -2,6 +2,105 @@
 
 ## Đã xong
 
+- (2026-06-21) **P10 — Sửa reranking quá lâu / treo hệ thống → chuyển reranker sang Cohere API.**
+  - **Chẩn đoán (B0, có số đo):** rerank `namdp-ptit/ViRanker` mất ~5 phút rồi **segfault**
+    (ACCESS_VIOLATION 0xC0000005). Nguyên nhân gốc KHÔNG phải mạng (tải file chỉ ~1.2s) mà là
+    **RAM**: model `model.safetensors` = **2.2GB** (XLM-RoBERTa-large) nhưng máy chỉ **7.8GB RAM /
+    0.6GB trống** → nạp model swap đĩa cực chậm rồi OOM-crash. Đối chứng: cross-encoder đa ngữ nhẹ
+    118MB nạp OK + predict 0.24s + xếp hạng tiếng Việt đúng (liên quan +0.90 / lạc đề −4.36).
+  - **Quyết định người dùng:** ViRanker bất khả thi trên phần cứng này → **dùng reranker qua API**;
+    chọn **Cohere Rerank đa ngữ** (`rerank-multilingual-v3.0`).
+  - **BE — đổi reranker + chống treo:**
+    - `config.py`: `rerank_provider` ("cohere" mặc định | "sentence-transformers"),
+      `rerank_model="rerank-multilingual-v3.0"`, `cohere_api_key`, `rag_timeout_seconds` (60s);
+      `rerank_warmup` mặc định **False** (API không cần nạp model). Giữ `hf_*`/`rerank_num_threads`
+      cho nhánh local tùy chọn.
+    - `query_engine._get_reranker()`: rẽ nhánh provider → **Cohere** dùng `CohereRerank` (LlamaIndex,
+      qua Phoenix trace; raise RuntimeError nếu thiếu key) | **local** giữ `SentenceTransformerRerank`
+      (`device="cpu"`, `_apply_hf_env`). `warmup()` chỉ ý nghĩa cho local.
+    - `main.py` lifespan: warm-up (qua `asyncio.to_thread`, lỗi không chặn app) — mặc định tắt với API.
+    - `chat_service.ask`: `asyncio.wait_for(to_thread(answer_question), timeout=...)` →
+      `TimeoutError` trả **503** "Hệ thống đang xử lý lâu hơn dự kiến, vui lòng thử lại…".
+    - `requirements.txt`: +`cohere==6.1.0`, +`llama-index-postprocessor-cohere-rerank==0.9.0`
+      (kéo pydantic 2.13.4→2.12.5). `.env.example` + `be/CLAUDE.md`: cấu hình Cohere + ghi chú PII.
+  - **Test:** BE **68 passed** (+5: 503 khi timeout, lifespan warm-up bật/tắt, `_get_reranker` chọn
+    Cohere đúng tham số + thiếu key→RuntimeError). ruff xanh.
+  - **VERIFY THẬT (đã có COHERE_API_KEY):**
+    - Rerank thật qua Cohere: 5 đoạn → **0.75s**, xếp hạng tiếng Việt đúng (liên quan cao / lạc đề ~0).
+    - Pipeline RAG thật (Weaviate→Cohere→OpenAI) trên tài liệu tuyển sinh đầu cấp TP.HCM: trả lời
+      đúng + trích dẫn [1][2], rerank đẩy đúng đoạn (score ~1.0). Trace Phoenix thật mỗi câu
+      (vd `0810f6aa…`, `c112ef99…`). Câu ngoài tài liệu (hồ sơ lớp 1) → từ chối đúng (chống bịa).
+    - **Eval LLM-as-judge (5 câu, gpt-4o-mini)** — RAGAS native KHÔNG cài được trên Python 3.14/Win
+      (xung đột langchain-community 1.x + scikit-network cần C++): **faithfulness 0.96 · answer_relevancy
+      1.00 · context_precision 0.92 · context_recall 0.96**; latency min 9.1s / max 20.8s / **avg 12.4s**
+      (so với **5 phút + crash** của ViRanker local).
+  - **Baseline:** không có số ViRanker để A/B vì model 2.2GB segfault ngay khi nạp → "trước" = hệ thống
+    treo/không dùng được; "sau" = chạy ổn định ~10-12s, chất lượng đo được như trên.
+
+- (2026-06-21) **P9 — Trích dẫn nguồn: chip tài liệu dưới tin bot + bảng tài liệu trượt ra (drawer) tô sáng đoạn được trích.**
+  - **BE — 1 endpoint chỉ-đọc:** `GET /api/v1/chat/documents/{id}` (auth `get_current_user`, KHÔNG admin; kho
+    tài liệu là tri thức chung) → `DocumentDetailOut{id, filename, page_count, chunk_count, chunks[]}`;
+    `DocumentChunkOut{chunk_index, content, weaviate_uuid}`. Thêm `document_repository.get_with_chunks`
+    (`selectinload`, sắp theo `chunk_index`) + `chat_service.get_document_detail` (404 nếu không có). **KHÔNG
+    migration, KHÔNG ingest lại, KHÔNG RAGAS** (chỉ đọc chunk đã lưu). `conftest._build_authed_client` giờ trả
+    `(client, session_maker)`; thêm fixture `user_client_db` để seed Document+chunk vào DB của request.
+  - **FE — 3 component tái sử dụng:** `lib/citations.ts` (`CitationDocument`/`CitationPara` + `buildCitationDocument`
+    + `pageMeta` "Đoạn N / tổng" + `groupSourcesByDocument` gom theo document_id, gom `weaviate_uuid` = tập tô
+    sáng); `components/ui/CitationChip.tsx` (pill icon `file-text` + hover-darken `.ch-cite-chip`, `disabled` khi
+    `document_id` null); `components/common/SourceDrawer.tsx` (overlay blur + panel trượt phải 460px,
+    `panel-slide-in` 240ms, Esc/X/nền đóng; header eyebrow "NGUỒN THAM KHẢO" + tiêu đề + "{kind} · LuminaAi" + X
+    tròn; pill meta viền teal; đoạn tô sáng nền `--sun-50` + nhãn "★ ĐOẠN ĐƯỢC TRÍCH DẪN"; loading/error/empty +
+    nút thử lại); `chat/_components/SourceChips.tsx` (`"use client"` gói chip + 1 drawer, chỉ 1 mở). `MessageBubble`
+    đổi `dedupeSources`→`groupSourcesByDocument` + render `<SourceChips>` (giữ server-safe). `types/chat.ts` +
+    `lib/chat.ts`: **giữ `weaviate_uuid`** trên UI `Source` (cần để tô sáng); `Icon.tsx` thêm `file-text`/`x`;
+    `globals.css` keyframe `panel-slide-in`.
+  - **Test:** BE **63 passed** (+5: service trả chunk đúng thứ tự, 404, API 200/404/401). FE **60 passed** (+17:
+    `CitationChip.test`, `SourceDrawer.test` mở/đóng/tô sáng/lỗi, `citations.test` mapper, mở rộng
+    `MessageBubble.test` chip bấm-được/gom-nhóm, sửa `chat.test` giữ weaviate_uuid). ruff + lint + tsc xanh.
+  - **Verify THẬT E2E (ảnh đã đọc lại):**
+    - **HTTP** (BE :8000, mint token): `GET .../documents/11` → **200** với 24 chunk thật (nội dung "ỦY BAN NHÂN
+      DÂN ĐẶC KHU CÔN ĐẢO…", `weaviate_uuid` thật); id sai → **404** `{"detail":"Không tìm thấy tài liệu."}`;
+      no-auth → **401**.
+    - **Trình duyệt** (FE dev :3001 ↔ BE :8000, user test + hội thoại seed trích doc 11): dòng **"Nguồn:"** + chip
+      pill teal có icon (hình 1); bấm chip → **drawer trượt phải** khớp mockup (hình 2): header/eyebrow/tiêu đề/X
+      tròn, pill **"2 đoạn được trích / 24"**, đoạn đầu **tô sáng cam** + nhãn "★ ĐOẠN ĐƯỢC TRÍCH DẪN" nội dung
+      thật; cuộn xuống thấy đoạn thường (hình 3). DOM: 24 đoạn, 2 tô sáng, 2 nhãn.
+    - **Đã dọn:** xóa user test + hội thoại seed khỏi DB; xóa file tạm; revert `.claude/launch.json`.
+  - **Gotcha verify:** preview browser KHÔNG tới được :8000 khi backend tắt ("Failed to fetch") → khởi động lại
+    uvicorn; CORS BE chỉ cho `:3000`/`:3001` → chạy dev verify trên **:3001**; điều hướng preview sang server ngoài
+    (:3000) làm kẹt renderer → để preview tự chạy FE trên :3001.
+  - **Tinh chỉnh theo đặc tả UI (chốt giá trị cuối):** nhãn "Nguồn:" icon `book` 13px, chữ 12px/600; chip viền
+    **`--teal-200`**, chữ 12px/**700**, icon `file` (Lucide), hover nền `--teal-100` + viền `--teal-400` 120ms;
+    header drawer icon `file`; overlay **`rgba(12,26,26,.40)` + blur 4px**; keyframe `panel-slide-in`
+    **`translateX(24px)+opacity:0→0`** 240ms ease-out. Đã verify lại bằng ảnh (computed style xác nhận viền
+    teal-200, overlay .40/blur 4px). FE **60 passed**, lint+tsc xanh.
+
+- (2026-06-21) **P8 — Menu 3 chấm trên ConversationItem: đổi tên (inline) + xóa (có modal xác nhận).**
+  - **BE — 2 endpoint mới (kiểm quyền sở hữu → 404):** `PATCH /api/v1/chat/conversations/{id}` (đổi tên, body
+    `RenameConversationRequest{title}`, trả `ConversationSummary`) + `DELETE /chat/conversations/{id}` (204,
+    cascade xóa messages do FK `ON DELETE CASCADE`). Thêm `conversation_repository.update_title/delete`,
+    `chat_service.rename_conversation/delete_conversation` (+ helper `_owned_or_404`). **KHÔNG migration** (cột
+    `title` đã có).
+  - **FE — menu + inline rename + modal:** `Icon.tsx` thêm `more-vertical` (3 chấm) + `edit` (bút chì);
+    `lib/api.ts` `chatApi.renameConversation/deleteConversation` (DELETE dùng `parseEmpty`); `useChat.ts`
+    `renameConvo` (optimistic, revert nếu lỗi) + `deleteConvo` (xóa active → mở cuộc mới trống); viết lại
+    `ConversationItem.tsx` (nút kebab mẫu `UserMenu` + `stopPropagation`, menu Đổi tên/Xóa, sửa tên inline
+    Enter-lưu/Esc-hủy); mới `components/common/ConfirmDialog.tsx` (modal giữa màn hình + overlay, Esc/click nền =
+    hủy); `ChatSidebar.tsx` giữ `pendingDelete` + render dialog; `page.tsx` truyền `onRename/onDelete`;
+    `globals.css` ẩn/hiện kebab theo hover.
+  - **Test:** BE **58 passed** (+10: rename/delete service+API, 404/401/422). FE **46 passed** (11 files;
+    +`ConversationItem.test`/`ConfirmDialog.test`, mở rộng `useChat.test` rename/delete). ruff + lint + tsc xanh.
+  - **Verify THẬT E2E (ảnh đã đọc lại):**
+    - **HTTP** (BE :8000): mint token → `PATCH .../3` đổi tên 200; empty title 422; missing 404; no-auth 401;
+      `DELETE .../3` 204; `GET .../3/messages` sau xóa 404; DELETE lại 404.
+    - **Trình duyệt** (FE dev :3001 ↔ BE :8000, user `parent.e2e@example.com`): mở kebab → menu **Đổi tên (bút chì)
+      / Xóa (thùng rác đỏ)** khớp hình; sửa tên inline → Enter → **reload vẫn giữ tên mới** (PATCH bền vững);
+      Xóa → **modal xác nhận giữa màn hình** kèm tên hội thoại (khớp hình 3) → "Xóa" → item biến mất → **reload
+      vẫn mất** (DELETE bền vững); xóa cuộc đang mở → tự mở cuộc trò chuyện mới trống; console không lỗi.
+    - **Icon khớp hình:** 3 chấm dọc (hình 1), bút chì "Đổi tên" + thùng rác đỏ "Xóa" (hình 2), modal (hình 3).
+  - **Gotcha verify:** CORS BE chỉ cho `:3000`/`:3001`; dev server autoPort nhảy sang :63407 → CORS chặn login →
+    chạy dev trên **:3001** (origin được phép) để verify. Đã revert config tạm trong `.claude/launch.json`.
+
 - (2026-06-21) **P7 — Hoàn chỉnh chat với AI: FE nối backend thật + lịch sử hội thoại bền vững.**
   - **BE — 2 endpoint đọc lịch sử (trên nền P6):** `GET /api/v1/chat/conversations` (sidebar, kèm snippet tin cuối)
     + `GET /chat/conversations/{id}/messages` (đọc lại, **kiểm quyền sở hữu** → 404 nếu không phải của mình).

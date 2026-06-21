@@ -12,6 +12,7 @@ import type {
   AskResponseDTO,
   ConversationDetailDTO,
   ConversationSummaryDTO,
+  DocumentDetailDTO,
 } from "@/app/types/chat";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -160,4 +161,21 @@ export const chatApi = {
     apiFetch(`/chat/conversations/${id}/messages`).then((r) =>
       parse<ConversationDetailDTO>(r),
     ),
+
+  /** Đổi tên một hội thoại → trả về bản tóm tắt đã cập nhật. */
+  renameConversation: (id: number, title: string) =>
+    apiFetch(`/chat/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }).then((r) => parse<ConversationSummaryDTO>(r)),
+
+  /** Xóa một hội thoại (204 No Content). */
+  deleteConversation: (id: number) =>
+    apiFetch(`/chat/conversations/${id}`, { method: "DELETE" }).then((r) =>
+      parseEmpty(r),
+    ),
+
+  /** Tài liệu + toàn bộ đoạn text (mở bảng trích dẫn khi bấm chip nguồn). */
+  getDocument: (id: number) =>
+    apiFetch(`/chat/documents/${id}`).then((r) => parse<DocumentDetailDTO>(r)),
 };

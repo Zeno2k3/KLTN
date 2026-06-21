@@ -54,7 +54,7 @@ describe("chat DTO → model mapping", () => {
     expect(c.messages).toEqual([]);
   });
 
-  it("sourceFromDTO: lược bỏ weaviate_uuid, giữ phần hiển thị", () => {
+  it("sourceFromDTO: giữ weaviate_uuid (để tô sáng đúng đoạn trong drawer)", () => {
     const s = sourceFromDTO({
       index: 1,
       document_id: 3,
@@ -67,6 +67,7 @@ describe("chat DTO → model mapping", () => {
       index: 1,
       document_id: 3,
       filename: "a.pdf",
+      weaviate_uuid: "uuid",
       snippet: "trích",
       score: 0.9,
     });

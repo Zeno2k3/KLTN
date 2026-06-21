@@ -46,7 +46,7 @@ export default function ChatPage() {
       />
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <ChatSidebar convos={chat.convos} activeId={chat.activeId} onOpen={chat.openConvo} onNew={chat.newChat} />
+        <ChatSidebar convos={chat.convos} activeId={chat.activeId} onOpen={chat.openConvo} onNew={chat.newChat} onRename={chat.renameConvo} onDelete={chat.deleteConvo} />
 
         <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           <ChatThread

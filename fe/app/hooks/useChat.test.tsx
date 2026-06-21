@@ -1,10 +1,12 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { askMock, listMock, getMock } = vi.hoisted(() => ({
+const { askMock, listMock, getMock, renameMock, deleteMock } = vi.hoisted(() => ({
   askMock: vi.fn(),
   listMock: vi.fn(),
   getMock: vi.fn(),
+  renameMock: vi.fn(),
+  deleteMock: vi.fn(),
 }));
 
 vi.mock("@/app/lib/api", () => {
@@ -18,7 +20,13 @@ vi.mock("@/app/lib/api", () => {
   }
   return {
     ApiError,
-    chatApi: { ask: askMock, listConversations: listMock, getMessages: getMock },
+    chatApi: {
+      ask: askMock,
+      listConversations: listMock,
+      getMessages: getMock,
+      renameConversation: renameMock,
+      deleteConversation: deleteMock,
+    },
   };
 });
 
@@ -28,6 +36,13 @@ import { useChat } from "@/app/hooks/useChat";
 beforeEach(() => {
   listMock.mockResolvedValue([]);
   getMock.mockResolvedValue({ id: 1, title: "x", messages: [] });
+  renameMock.mockResolvedValue({
+    id: 5,
+    title: "Tên mới",
+    updated_at: "2026-06-21T08:00:00.000Z",
+    last_message: null,
+  });
+  deleteMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -125,5 +140,67 @@ describe("useChat — gọi backend RAG thật", () => {
     expect(result.current.msgs.map((m) => m.from)).toEqual(["user", "bot"]);
     expect(result.current.msgs[1].text).toBe("đáp cũ");
     expect(getMock).toHaveBeenCalledWith(5);
+  });
+});
+
+describe("useChat — đổi tên / xóa hội thoại", () => {
+  function seedConvo() {
+    listMock.mockResolvedValue([
+      { id: 5, title: "Tên cũ", updated_at: "2026-06-21T08:00:00.000Z", last_message: "x" },
+    ]);
+  }
+
+  it("renameConvo: cập nhật title trong state + gọi API với serverId", async () => {
+    seedConvo();
+    const { result } = renderHook(() => useChat("bạn"));
+    await waitFor(() =>
+      expect(result.current.convos.some((c) => c.id === "5")).toBe(true),
+    );
+
+    await act(async () => {
+      await result.current.renameConvo("5", "Tên mới");
+    });
+
+    expect(renameMock).toHaveBeenCalledWith(5, "Tên mới");
+    expect(result.current.convos.find((c) => c.id === "5")?.title).toBe("Tên mới");
+  });
+
+  it("deleteConvo (không phải cuộc đang mở): gọi API + bỏ khỏi danh sách, giữ active", async () => {
+    seedConvo();
+    const { result } = renderHook(() => useChat("bạn"));
+    await waitFor(() =>
+      expect(result.current.convos.some((c) => c.id === "5")).toBe(true),
+    );
+    const activeBefore = result.current.activeId;
+
+    await act(async () => {
+      await result.current.deleteConvo("5");
+    });
+
+    expect(deleteMock).toHaveBeenCalledWith(5);
+    expect(result.current.convos.some((c) => c.id === "5")).toBe(false);
+    expect(result.current.activeId).toBe(activeBefore);
+  });
+
+  it("deleteConvo (cuộc đang mở): xóa rồi mở cuộc trò chuyện mới trống", async () => {
+    seedConvo();
+    const { result } = renderHook(() => useChat("bạn"));
+    await waitFor(() =>
+      expect(result.current.convos.some((c) => c.id === "5")).toBe(true),
+    );
+
+    await act(async () => {
+      await result.current.openConvo("5");
+    });
+    expect(result.current.activeId).toBe("5");
+
+    await act(async () => {
+      await result.current.deleteConvo("5");
+    });
+
+    expect(deleteMock).toHaveBeenCalledWith(5);
+    expect(result.current.convos.some((c) => c.id === "5")).toBe(false);
+    expect(result.current.activeId.startsWith("new-")).toBe(true);
+    expect(result.current.msgs).toEqual([]);
   });
 });
