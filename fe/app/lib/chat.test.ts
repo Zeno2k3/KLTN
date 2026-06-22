@@ -70,6 +70,7 @@ describe("chat DTO → model mapping", () => {
       weaviate_uuid: "uuid",
       snippet: "trích",
       score: 0.9,
+      cited_spans: [],
     });
   });
 });

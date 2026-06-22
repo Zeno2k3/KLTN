@@ -76,13 +76,19 @@ class Settings(BaseSettings):
     # OCR — tầng fallback cho PDF scan ảnh (không có lớp text). Render trang → ảnh → OpenAI Vision
     # (qua LlamaIndex ImageBlock → Phoenix auto-trace). Chỉ chạy cho trang bị đánh dấu cần OCR.
     ocr_enabled: bool = True
-    ocr_provider: str = "openai"  # "openai" (vision-LLM) | "tesseract" (chưa triển khai)
+    ocr_provider: str = (
+        "openai"  # "openai" (vision-LLM) | "tesseract" (chưa triển khai)
+    )
     ocr_model: str = ""  # rỗng → fallback openai_chat_model (gpt-4o-mini có vision)
     # Trang có text-layer < ngưỡng ký tự (và không có bảng thật) → coi là trang scan cần OCR.
     ocr_min_chars: int = 50
     ocr_dpi: int = 200  # DPI render trang → ảnh (cân chất lượng OCR vs token ảnh)
-    ocr_max_pages: int = 50  # số trang scan/tài liệu vượt ngưỡng → ingest FAILED (chặn cost token)
-    ocr_timeout_seconds: float = 60.0  # timeout mỗi call vision (tránh treo cả lượt OCR)
+    ocr_max_pages: int = (
+        50  # số trang scan/tài liệu vượt ngưỡng → ingest FAILED (chặn cost token)
+    )
+    ocr_timeout_seconds: float = (
+        60.0  # timeout mỗi call vision (tránh treo cả lượt OCR)
+    )
 
     # Retrieval hybrid (BM25 keyword + vector semantic, hợp nhất RRF)
     # alpha=1.0 thuần vector, 0.0 thuần keyword; 0.6 ⇒ ưu tiên 60% semantic / 40% keyword.
@@ -129,6 +135,18 @@ class Settings(BaseSettings):
 
     # Timeout (giây) cho toàn pipeline RAG; vượt → 503 thân thiện thay vì treo vô hạn.
     rag_timeout_seconds: float = 60.0
+
+    # Hậu kiểm trích nguồn (post-hoc citation attribution + verification). Chạy SAU synthesize:
+    # gán đúng nguồn cho từng câu (attribution + verbatim quote) rồi judge support/in_scope → DROP
+    # câu sai phạm vi/không nguồn, sửa marker lệch. Fail-safe: lỗi/timeout → giữ answer gốc, KHÔNG
+    # chặn. Mặc định tắt để rollout an toàn (bật qua .env sau khi rag-eval xác nhận cải thiện).
+    citation_verify_enabled: bool = False
+    verifier_timeout_seconds: float = (
+        20.0  # timeout riêng bước verify (nằm trong rag_timeout chung)
+    )
+    # LLM RIÊNG cho bước verify (rỗng → fallback openai_chat_model). KHÔNG dùng singleton LLM chung.
+    # Một call structured-output làm cả attribution (gán nguồn + verbatim quote) lẫn judge.
+    verifier_model: str = ""
 
     # Arize Phoenix (tracing LLM/embedding qua OTEL). Tắt → không khởi tạo tracing.
     phoenix_enabled: bool = True

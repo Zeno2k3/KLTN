@@ -1,5 +1,55 @@
 # PROGRESS
 
+## 2026-06-23 — Hậu kiểm trích nguồn (post-hoc citation attribution + verification)
+
+**Vấn đề:** câu trả lời lẫn nội dung NGOÀI PHẠM VI câu hỏi (hỏi "đối tượng ưu tiên lớp 1" →
+trả lời kèm cả "lớp 6"). KHÔNG phải citation ảo: marker `[n]` trỏ đúng chunk, nhưng chunk gộp
+lớp 1 + lớp 6 trong cùng Điều; system prompt không yêu cầu lọc phạm vi → LLM tái tạo cả phần
+lớp 6. `sources` lại dựng độc lập, không đối chiếu marker.
+
+**Giải pháp (2 lớp, DROP, fail-safe — người dùng chọn):**
+- **Lớp A** — `_SYSTEM_PROMPT` + `_user_prompt` ([query_engine.py](be/app/rag/query_engine.py)):
+  thêm nguyên tắc LỌC THEO PHẠM VI (cấp lớp/năm/khu vực/đối tượng).
+- **Lớp B** — module mới [citation_verifier.py](be/app/rag/citation_verifier.py): một LLM RIÊNG
+  (verifier) đối chiếu TỪNG CÂU với nguồn đã retrieve → gán đúng nguồn (attribution) + trích
+  `supporting_quote` verbatim + judge `supported`/`in_scope` → `keep|recite|drop`. DROP câu sai
+  phạm vi/không nguồn, sửa marker lệch, lọc lại `sources`, gắn `cited_spans`. 1 call structured
+  JSON. **Fail-safe:** lỗi/timeout/drop-hết → giữ answer gốc, `ok=False`, không chặn. Span
+  `rag.citation_verify`. Tắt mặc định (`CITATION_VERIFY_ENABLED=false`) để rollout an toàn.
+- **FE** — highlight SUB-CHUNK: `SourceOut.cited_spans` → drawer chỉ tô đúng đoạn câu trả lời dựa
+  vào (không tô phần lớp 6). [citations.ts](fe/app/lib/citations.ts) `buildCitationDocument` khớp
+  span (linh hoạt khoảng trắng, **fallback tô cả chunk** nếu không khớp → tương thích ngược).
+
+**Quyết định:** LLM-judge hậu kỳ (KHÔNG ContextCite — không bắt được off-scope, tốn logits;
+KHÔNG mô hình fine-tune — máy RAM thấp, không có bản tiếng Việt). DROP (sửa answer). Cơ sở:
+post-hoc thắng generation-time về faithfulness cho high-stakes (paper 2509.21557).
+
+**Bằng chứng (đã chạy thật):**
+- Gate: `ruff check` PASS · pytest **120 passed** (+8 test verifier, +3 test pipeline);
+  FE `lint`+`tsc`+`vitest` **75 passed** (+3 test highlight sub-chunk).
+- **Chạy thật `verify_answer` với OpenAI gpt-4o-mini** (kịch bản lớp1/lớp6): câu "lớp 6"
+  `in_scope=False` → **DROP**; answer sạch (`lop6_con_trong_answer=False`); `cited_spans` chứa
+  quote nguyên văn; trace đẩy lên **Phoenix Cloud** (project kltn-rag). Đã dọn script tạm.
+
+**File:** mới [citation_verifier.py](be/app/rag/citation_verifier.py),
+[test_citation_verifier.py](be/tests/test_citation_verifier.py); sửa
+[query_engine.py](be/app/rag/query_engine.py), [config.py](be/app/core/config.py),
+[chat.py](be/app/schemas/chat.py), [test_query_engine.py](be/tests/test_query_engine.py); FE
+[chat.ts](fe/app/types/chat.ts), [lib/chat.ts](fe/app/lib/chat.ts),
+[citations.ts](fe/app/lib/citations.ts), [SourceDrawer.tsx](fe/app/components/common/SourceDrawer.tsx),
+[SourceChips.tsx](fe/app/chat/_components/SourceChips.tsx). **Không cần migration** (cited_spans
+nằm trong `context_sources` JSONB).
+
+### Việc tiếp theo (cần stack sống — chưa làm)
+- **E2E qua HTTP** (`CITATION_VERIFY_ENABLED=true` + uvicorn + Weaviate có dữ liệu + Cohere + auth):
+  gọi endpoint chat câu lớp 1 thật, dán request+response, **chụp SourceDrawer** thấy chỉ đoạn lớp 1
+  được tô sáng.
+- **rag-eval golden set** (Lớp A đổi prompt mặc định → cần đo before/after scope precision, đảm bảo
+  không under-answer). RAGAS không chạy Py3.14 → đo thủ công như các lần trước.
+- Bật cờ sau khi eval xác nhận cải thiện. Cân nhắc tinh chỉnh prompt judge nếu drop nhầm.
+
+---
+
 ## 2026-06-22 — OCR fallback cho PDF scan ảnh (mọi loại PDF)
 
 **Vấn đề:** PDF scan ảnh (không có lớp text) → pdfplumber ra rỗng → ingest báo lỗi

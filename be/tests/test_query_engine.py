@@ -57,6 +57,7 @@ def test_answer_question_reranks_builds_sources_and_calls_llm(monkeypatch):
     system_msg = captured["messages"][0].content
     user_msg = captured["messages"][1].content
     assert "CHỈ trả lời dựa trên" in system_msg  # ràng buộc chống bịa
+    assert "PHẠM VI" in system_msg  # Lớp A: yêu cầu lọc theo phạm vi câu hỏi
     assert "đoạn nội dung 0" in user_msg  # ngữ cảnh đã rerank được đưa vào prompt
     assert "Khi nào nhận hồ sơ?" in user_msg
 
@@ -185,3 +186,91 @@ def test_answer_question_rag_route_retrieves_with_rewritten_query(monkeypatch):
     assert seen["query"] == "Học phí trường Lumina là bao nhiêu?"
     assert result.answer == "Học phí là 2 triệu/tháng [1]."
     assert result.sources[0]["filename"] == "a.pdf"
+
+
+# --- Hậu kiểm trích nguồn (citation verifier) trong pipeline ---
+
+
+def _two_source_pipeline(monkeypatch, answer_text):
+    """Dựng pipeline mock (router/rewrite tắt) trả 2 nguồn + synthesize ra ``answer_text``."""
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
+    nodes = [
+        _node("nội dung 1", 1, "a.pdf", "u1", 0.9),
+        _node("nội dung 2", 2, "b.pdf", "u2", 0.8),
+    ]
+    monkeypatch.setattr(query_engine, "hybrid_retrieve", lambda q, k, f: nodes)
+    monkeypatch.setattr(
+        query_engine,
+        "_get_reranker",
+        lambda: SimpleNamespace(postprocess_nodes=lambda ns, query_str=None: ns),
+    )
+    monkeypatch.setattr(
+        query_engine,
+        "_get_llm",
+        lambda: SimpleNamespace(
+            chat=lambda messages: SimpleNamespace(
+                message=SimpleNamespace(content=answer_text)
+            )
+        ),
+    )
+
+
+def test_answer_question_runs_verifier_when_enabled(monkeypatch):
+    from app.rag import citation_verifier
+
+    _two_source_pipeline(monkeypatch, "Câu 1 [1]. Câu 2 [2].")
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", True)
+
+    def _fake_verify(answer, context, sources, query):
+        # Giả lập DROP câu 2 (source 2 bị loại), gắn cited_spans cho source 1.
+        return citation_verifier.VerificationResult(
+            answer="Câu 1 [1].",
+            cited_indices={1},
+            cited_spans={1: ["nội dung 1"]},
+            ok=True,
+            dropped_count=1,
+        )
+
+    monkeypatch.setattr(citation_verifier, "verify_answer", _fake_verify)
+
+    result = query_engine.answer_question("hỏi")
+    assert result.answer == "Câu 1 [1]."
+    assert [s["index"] for s in result.sources] == [1]  # source 2 đã bị lọc
+    assert result.sources[0]["cited_spans"] == ["nội dung 1"]
+
+
+def test_answer_question_skips_verifier_when_disabled(monkeypatch):
+    from app.rag import citation_verifier
+
+    _two_source_pipeline(monkeypatch, "Câu 1 [1]. Câu 2 [2].")
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", False)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("verify_answer KHÔNG được gọi khi tắt cờ")
+
+    monkeypatch.setattr(citation_verifier, "verify_answer", _boom)
+
+    result = query_engine.answer_question("hỏi")
+    assert result.answer == "Câu 1 [1]. Câu 2 [2]."  # synthesize gốc, không hiệu đính
+    assert len(result.sources) == 2
+
+
+def test_answer_question_verifier_failsafe(monkeypatch):
+    from app.rag import citation_verifier
+
+    _two_source_pipeline(monkeypatch, "Câu 1 [1]. Câu 2 [2].")
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", True)
+
+    def _fake_verify(answer, context, sources, query):
+        # ok=False → fail-safe: pipeline phải giữ answer + sources GỐC.
+        return citation_verifier.VerificationResult(
+            answer="(không dùng)", cited_indices=set(), cited_spans={}, ok=False
+        )
+
+    monkeypatch.setattr(citation_verifier, "verify_answer", _fake_verify)
+
+    result = query_engine.answer_question("hỏi")
+    assert result.answer == "Câu 1 [1]. Câu 2 [2]."  # giữ answer gốc
+    assert len(result.sources) == 2
+    assert "cited_spans" not in result.sources[0]  # không gắn span khi fail-safe

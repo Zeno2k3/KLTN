@@ -68,4 +68,51 @@ describe("citations", () => {
       citedUuidsFromSources([src({ weaviate_uuid: "X" }), src({ weaviate_uuid: null })]),
     ).toEqual(new Set(["x"]));
   });
+
+  it("groupSourcesByDocument gom cited_spans theo uuid (hạ thường)", () => {
+    const groups = groupSourcesByDocument([
+      src({ index: 1, document_id: 1, weaviate_uuid: "U1", cited_spans: ["q1", "q2"] }),
+    ]);
+    expect(groups[0].citedSpans.get("u1")).toEqual(["q1", "q2"]);
+  });
+
+  // --- Highlight sub-chunk theo cited_spans ---
+
+  const DTO_SPAN: DocumentDetailDTO = {
+    id: 2,
+    filename: "uutien.pdf",
+    page_count: 1,
+    chunk_count: 1,
+    chunks: [
+      {
+        chunk_index: 0,
+        content: "Trẻ 6 tuổi nộp hồ sơ. Học sinh lớp 6 thì khác.",
+        weaviate_uuid: "X",
+      },
+    ],
+  };
+
+  it("buildCitationDocument tô sáng ĐÚNG đoạn (sub-chunk) theo cited_spans", () => {
+    const spans = new Map([["x", ["Trẻ 6 tuổi nộp hồ sơ"]]]);
+    const para = buildCitationDocument(DTO_SPAN, new Set(["x"]), spans).paras[0];
+    expect(para.highlight).toBe(true);
+    expect(para.segments).toBeDefined();
+    // Chỉ đoạn lớp 1 được tô; phần "lớp 6" KHÔNG.
+    expect(para.segments!.filter((s) => s.mark).map((s) => s.text)).toEqual([
+      "Trẻ 6 tuổi nộp hồ sơ",
+    ]);
+    expect(
+      para.segments!
+        .filter((s) => !s.mark)
+        .map((s) => s.text)
+        .join(""),
+    ).toContain("Học sinh lớp 6");
+  });
+
+  it("span không khớp → fallback tô cả đoạn (segments undefined, tương thích ngược)", () => {
+    const spans = new Map([["x", ["đoạn không tồn tại trong chunk"]]]);
+    const para = buildCitationDocument(DTO_SPAN, new Set(["x"]), spans).paras[0];
+    expect(para.highlight).toBe(true);
+    expect(para.segments).toBeUndefined();
+  });
 });

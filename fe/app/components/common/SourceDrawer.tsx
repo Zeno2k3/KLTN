@@ -15,6 +15,8 @@ interface SourceDrawerProps {
   documentId: number | null;
   /** UUID các đoạn được trích trong tin nhắn → tô sáng. */
   citedUuids: Set<string>;
+  /** UUID chunk → các đoạn nguyên văn được trích (highlight sub-chunk). */
+  citedSpans?: Map<string, string[]>;
   /** Tên tạm hiện ở header trong lúc tải / khi lỗi. */
   fallbackTitle?: string;
   onClose: () => void;
@@ -33,6 +35,7 @@ export default function SourceDrawer({
   open,
   documentId,
   citedUuids,
+  citedSpans,
   fallbackTitle,
   onClose,
 }: SourceDrawerProps) {
@@ -85,8 +88,8 @@ export default function SourceDrawer({
 
   // Tô sáng tính riêng (rẻ, thuần) để đổi citedUuids không gây nạp lại mạng.
   const doc = useMemo(
-    () => (dtoData ? buildCitationDocument(dtoData, citedUuids) : null),
-    [dtoData, citedUuids],
+    () => (dtoData ? buildCitationDocument(dtoData, citedUuids, citedSpans) : null),
+    [dtoData, citedUuids, citedSpans],
   );
 
   if (!open) return null;
@@ -317,7 +320,25 @@ function Para({ para, first }: { para: CitationPara; first: boolean }) {
             whiteSpace: "pre-wrap",
           }}
         >
-          {para.text}
+          {para.segments
+            ? para.segments.map((seg, j) =>
+                seg.mark ? (
+                  <mark
+                    key={j}
+                    style={{
+                      background: "var(--sun-200)",
+                      color: "inherit",
+                      borderRadius: 3,
+                      padding: "0 1px",
+                    }}
+                  >
+                    {seg.text}
+                  </mark>
+                ) : (
+                  <span key={j}>{seg.text}</span>
+                ),
+              )
+            : para.text}
         </p>
       </div>
     );

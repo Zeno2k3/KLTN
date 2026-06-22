@@ -21,6 +21,7 @@ export function sourceFromDTO(dto: SourceDTO): Source {
     weaviate_uuid: dto.weaviate_uuid,
     snippet: dto.snippet,
     score: dto.score,
+    cited_spans: dto.cited_spans ?? [],
   };
 }
 

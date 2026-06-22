@@ -9,6 +9,8 @@ export type Source = {
   weaviate_uuid: string | null;
   snippet: string | null;
   score: number | null;
+  /** Các đoạn nguyên văn trong chunk thực sự được trích (hậu kiểm) → highlight sub-chunk. */
+  cited_spans?: string[];
 };
 
 export type Msg = {
@@ -39,6 +41,7 @@ export type SourceDTO = {
   weaviate_uuid: string | null;
   snippet: string | null;
   score: number | null;
+  cited_spans?: string[];
 };
 
 export type AskResponseDTO = {

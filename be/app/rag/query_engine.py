@@ -42,6 +42,7 @@ Bạn là trợ lý tư vấn tuyển sinh tiểu học, hỗ trợ phụ huynh 
 1. CHỈ trả lời dựa trên thông tin trong phần NGỮ CẢNH bên dưới. Không dùng kiến thức bên ngoài, không suy diễn, không bịa đặt.
 2. Mỗi nguồn trong NGỮ CẢNH được đánh số [1], [2], [3]... Khi nêu thông tin lấy từ nguồn nào, trích dẫn số nguồn đó NGAY SAU câu liên quan (ví dụ: "Hồ sơ cần giấy khai sinh bản sao [2]."). Nếu một ý dựa trên nhiều nguồn, ghi liền nhau: [1][3]. Tuyệt đối không gắn [n] cho câu không lấy từ ngữ cảnh.
 3. Nếu NGỮ CẢNH không chứa thông tin để trả lời, nói rõ: "Hiện tôi chưa có thông tin về vấn đề này" và hướng dẫn phụ huynh liên hệ trực tiếp nhà trường. KHÔNG đoán, KHÔNG thay bằng thông tin chung chung.
+4. LỌC THEO PHẠM VI CÂU HỎI. Trước khi trả lời, hãy tự xác định PHẠM VI mà câu hỏi nhắm tới: cấp lớp (lớp 1...), năm học, khu vực/tuyến, đối tượng. Một nguồn có thể gộp nhiều phạm vi trong cùng một Điều/Khoản (ví dụ vừa nói lớp 1 vừa nói lớp 6). CHỈ đưa vào câu trả lời những ý KHỚP ĐÚNG phạm vi câu hỏi; LOẠI BỎ mọi ý thuộc phạm vi khác DÙ NÓ NẰM TRONG NGUỒN. Ví dụ: hỏi "đối tượng ưu tiên xét tuyển lớp 1" thì KHÔNG nêu đối tượng ưu tiên của lớp 6, dù cùng một Điều liệt kê cả hai.
 
 # XỬ LÝ TÌNH HUỐNG
 - Nguồn mâu thuẫn nhau: nêu rõ sự khác biệt và khuyên phụ huynh xác nhận lại với nhà trường, không tự chọn một bên.
@@ -218,7 +219,9 @@ def _user_prompt(context: str, query_text: str) -> str:
     return (
         f"NGỮ CẢNH:\n{context}\n\n"
         f"CÂU HỎI: {query_text}\n\n"
-        "Hãy trả lời dựa trên ngữ cảnh trên."
+        "Bước 1: tự xác định phạm vi câu hỏi (lớp/năm/khu vực/đối tượng). "
+        "Bước 2: chỉ trả lời bằng các ý trong ngữ cảnh KHỚP đúng phạm vi đó, "
+        "bỏ qua phần ngoài phạm vi dù có trong nguồn."
     )
 
 
@@ -232,15 +235,18 @@ def retrieve_and_rerank(query_text: str, filters: Any = None) -> list[NodeWithSc
 
 def synthesize(
     query_text: str, reranked: list[NodeWithScore]
-) -> tuple[str, list[dict]]:
-    """LLM soạn câu trả lời từ các chunk đã xếp hạng; trả (answer, sources trích dẫn)."""
+) -> tuple[str, list[dict], str]:
+    """LLM soạn câu trả lời từ các chunk đã xếp hạng; trả (answer, sources trích dẫn, context).
+
+    Trả thêm ``context`` (chuỗi ngữ cảnh đã đánh số [n]) để bước hậu kiểm trích nguồn nhìn ĐÚNG
+    ngữ cảnh đã đưa cho LLM, không phải ráp lại từ snippet[:500]."""
     context, sources = _build_context(reranked)
     messages = [
         ChatMessage(role=MessageRole.SYSTEM, content=_SYSTEM_PROMPT),
         ChatMessage(role=MessageRole.USER, content=_user_prompt(context, query_text)),
     ]
     response = _get_llm().chat(messages)
-    return (response.message.content or "").strip(), sources
+    return (response.message.content or "").strip(), sources, context
 
 
 def _answer_direct(query_text: str, history: list[dict] | None = None) -> str:
@@ -303,5 +309,23 @@ def answer_question(
                 answer=_NO_CONTEXT_ANSWER, sources=[], trace_id=trace_id
             )
 
-        answer, sources = synthesize(effective_query, reranked)
+        answer, sources, context = synthesize(effective_query, reranked)
+
+        # Hậu kiểm trích nguồn (post-hoc): gán đúng nguồn từng câu, DROP câu sai phạm vi/không
+        # nguồn, sửa marker lệch, gắn cited_spans cho FE highlight sub-chunk. Fail-safe: lỗi →
+        # giữ answer gốc. Tắt mặc định (settings.citation_verify_enabled).
+        if settings.citation_verify_enabled:
+            from app.rag import (
+                citation_verifier,
+            )  # lazy import: app vẫn import được khi tắt
+
+            vr = citation_verifier.verify_answer(
+                answer, context, sources, effective_query
+            )
+            if vr.ok:
+                answer = vr.answer
+                sources = [s for s in sources if s["index"] in vr.cited_indices]
+                for s in sources:
+                    s["cited_spans"] = vr.cited_spans.get(s["index"], [])
+
         return AnswerResult(answer=answer, sources=sources, trace_id=trace_id)

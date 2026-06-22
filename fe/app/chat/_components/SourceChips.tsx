@@ -45,6 +45,7 @@ export default function SourceChips({ groups }: { groups: SourceGroup[] }) {
         open={active != null}
         documentId={active?.documentId ?? null}
         citedUuids={active?.citedUuids ?? EMPTY}
+        citedSpans={active?.citedSpans}
         fallbackTitle={active?.label}
         onClose={() => setActive(null)}
       />

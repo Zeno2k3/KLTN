@@ -29,6 +29,9 @@ class SourceOut(BaseModel):
     weaviate_uuid: str | None = None
     snippet: str | None = None
     score: float | None = None
+    # Các đoạn NGUYÊN VĂN trong chunk thực sự được trích (do hậu kiểm trích nguồn xác định) → FE
+    # highlight đúng đoạn (sub-chunk) trong drawer thay vì tô cả chunk. [] nếu chưa qua hậu kiểm.
+    cited_spans: list[str] = []
 
 
 class AskResponse(BaseModel):
