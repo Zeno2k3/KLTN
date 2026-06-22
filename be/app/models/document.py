@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     Enum,
     ForeignKey,
     Integer,
@@ -52,6 +53,10 @@ class Document(TimestampMixin, Base):
         Integer, server_default=text("0"), nullable=False
     )
     error_message: Mapped[str | None] = mapped_column(Text)
+    # Metadata cấp văn bản (auto-extract từ header — xem app/rag/doc_metadata.py).
+    doc_type: Mapped[str | None] = mapped_column(String(50))  # ke_hoach|quyet_dinh|thong_tu|khac
+    issued_date: Mapped[str | None] = mapped_column(String(50))  # giữ dạng chuỗi (định dạng đa dạng)
+    issuing_body: Mapped[str | None] = mapped_column(String(255))
 
     uploader: Mapped[User | None] = relationship(back_populates="documents")
     chunks: Mapped[list[DocumentChunk]] = relationship(
@@ -73,11 +78,20 @@ class DocumentChunk(CreatedAtMixin, Base):
         ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)  # nội dung GỐC (không kèm context)
     weaviate_uuid: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), unique=True
     )
     token_count: Mapped[int | None] = mapped_column(Integer)
+    # Metadata cấu trúc (structure-aware chunking). ``heading_path`` lưu JSON list breadcrumb;
+    # ``context`` là đoạn Contextual Retrieval đã prepend vào vector (lưu riêng để trích dẫn sạch).
+    heading_path: Mapped[str | None] = mapped_column(Text)  # JSON: ["A...", "Mục III", "Điều 1"]
+    context: Mapped[str | None] = mapped_column(Text)
+    chunk_type: Mapped[str | None] = mapped_column(String(20))  # text|table|list|mixed
+    has_table: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )
+    page_number: Mapped[int | None] = mapped_column(Integer)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
 

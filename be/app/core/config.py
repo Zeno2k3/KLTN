@@ -58,9 +58,31 @@ class Settings(BaseSettings):
     # nên chấm điểm property này (tránh nhiễu từ "_node_content").
     weaviate_text_key: str = "text"
 
-    # Chunking (SentenceSplitter)
+    # Chunking — structure-aware + LLM chunker (xem app/rag/chunker.py).
+    # LƯU Ý NGỮ NGHĨA: ``chunk_size`` KHÔNG còn là cap cứng. Khoản là đơn vị nguyên tử
+    # (1 Khoản = 1 chunk, không bao giờ cắt giữa Khoản dù dài). ``chunk_size`` chỉ là NGƯỠNG MỀM
+    # để GỘP nhiều Khoản nhỏ liền kề vào cùng một chunk; một Khoản đơn vượt ngưỡng vẫn giữ nguyên.
     chunk_size: int = 512
     chunk_overlap: int = 64
+    # LLM chunker: model RIÊNG cho bước chia chunk (rỗng → fallback openai_chat_model).
+    # KHÔNG dùng singleton LLM chung (mỗi bước RAG giữ LLM/model riêng).
+    chunker_model: str = ""
+    chunk_llm_enabled: bool = (
+        True  # tắt → chỉ dùng rule-based (xác định, không gọi LLM)
+    )
+    # Section <= ngưỡng này → emit thẳng 1 chunk, KHÔNG gọi LLM chia (tiết kiệm chi phí token).
+    chunk_llm_min_tokens: int = 400
+
+    # OCR — tầng fallback cho PDF scan ảnh (không có lớp text). Render trang → ảnh → OpenAI Vision
+    # (qua LlamaIndex ImageBlock → Phoenix auto-trace). Chỉ chạy cho trang bị đánh dấu cần OCR.
+    ocr_enabled: bool = True
+    ocr_provider: str = "openai"  # "openai" (vision-LLM) | "tesseract" (chưa triển khai)
+    ocr_model: str = ""  # rỗng → fallback openai_chat_model (gpt-4o-mini có vision)
+    # Trang có text-layer < ngưỡng ký tự (và không có bảng thật) → coi là trang scan cần OCR.
+    ocr_min_chars: int = 50
+    ocr_dpi: int = 200  # DPI render trang → ảnh (cân chất lượng OCR vs token ảnh)
+    ocr_max_pages: int = 50  # số trang scan/tài liệu vượt ngưỡng → ingest FAILED (chặn cost token)
+    ocr_timeout_seconds: float = 60.0  # timeout mỗi call vision (tránh treo cả lượt OCR)
 
     # Retrieval hybrid (BM25 keyword + vector semantic, hợp nhất RRF)
     # alpha=1.0 thuần vector, 0.0 thuần keyword; 0.6 ⇒ ưu tiên 60% semantic / 40% keyword.

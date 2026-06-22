@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import uuid as uuid_lib
 from pathlib import Path
@@ -19,7 +20,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.base import DocumentStatus
 from app.models.document import Document, DocumentChunk
-from app.rag import ingest, vector_store
+from app.rag import chunker, doc_metadata, extract, ocr, vector_store
 from app.repositories import document_repository
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,8 @@ async def create_document(
 
 
 async def ingest_document(document_id: int) -> None:
-    """Tác vụ nền: trích xuất → chunk → embed → ghi Weaviate → lưu chunk → status=ready.
+    """Tác vụ nền: trích xuất (pdfplumber) → auto-extract metadata → structure-aware + LLM chunk →
+    embed → ghi Weaviate → lưu chunk → status=ready.
 
     Lỗi bất kỳ → status=failed kèm lý do; cố gắng gỡ vector đã ghi để tránh rác."""
     async with AsyncSessionLocal() as db:
@@ -101,22 +103,41 @@ async def ingest_document(document_id: int) -> None:
         filename = document.filename
 
     try:
-        # 1) Trích xuất + chunk (CPU-bound → thread)
-        text, page_count = await asyncio.to_thread(ingest.extract_pdf_text, file_path)
-        if not text.strip():
-            raise ValueError(
-                "Không trích xuất được văn bản từ PDF (có thể là bản scan ảnh)."
-            )
-        nodes = await asyncio.to_thread(
-            ingest.chunk_to_nodes, text, document_id, filename
+        # 1) Trích xuất text + bảng theo trang (CPU-bound → thread). Đánh dấu trang scan cần OCR.
+        ocr_min = settings.ocr_min_chars if settings.ocr_enabled else 0
+        pages = await asyncio.to_thread(
+            extract.extract_with_tables, file_path, ocr_min
         )
-        if not nodes:
+
+        # 1b) OCR fallback cho trang scan (render + vision-LLM → ghi đè page.text). Có mạng → thread.
+        if settings.ocr_enabled and any(p.needs_ocr for p in pages):
+            pages = await asyncio.to_thread(ocr.ocr_pages, file_path, pages)
+
+        has_content = any(p.text.strip() for p in pages) or any(p.tables for p in pages)
+        if not has_content:
+            raise ValueError(
+                "Không trích xuất được văn bản từ PDF (kể cả sau khi OCR)."
+            )
+        page_count = len(pages)
+
+        # 2) Auto-extract metadata cấp văn bản (regex + LLM xác nhận; có mạng → thread).
+        doc_meta = await asyncio.to_thread(
+            doc_metadata.extract_doc_metadata, pages, filename
+        )
+
+        # 3) Structure-aware + LLM chunking (gọi LLM → thread; bọc span Phoenix bên trong).
+        chunk_nodes = await asyncio.to_thread(
+            chunker.build_nodes, pages, document_id, filename, doc_meta
+        )
+        if not chunk_nodes:
             raise ValueError("PDF không tạo được chunk nào.")
 
-        # 2) Embed + ghi Weaviate (mạng → thread)
-        await asyncio.to_thread(vector_store.add_nodes, nodes)
+        # 4) Embed + ghi Weaviate (mạng → thread).
+        await asyncio.to_thread(
+            vector_store.add_nodes, [cn.node for cn in chunk_nodes]
+        )
 
-        # 3) Lưu chunk + cập nhật trạng thái
+        # 5) Lưu chunk + metadata + cập nhật trạng thái.
         async with AsyncSessionLocal() as db:
             document = await document_repository.get_by_id(db, document_id)
             if document is None:
@@ -125,22 +146,34 @@ async def ingest_document(document_id: int) -> None:
                 DocumentChunk(
                     document_id=document_id,
                     chunk_index=i,
-                    content=node.text,
-                    weaviate_uuid=uuid_lib.UUID(node.node_id),
-                    token_count=ingest.count_tokens(node.text),
+                    content=cn.content,
+                    weaviate_uuid=uuid_lib.UUID(cn.node.node_id),
+                    token_count=cn.token_count,
+                    heading_path=(
+                        json.dumps(cn.heading_path, ensure_ascii=False)
+                        if cn.heading_path
+                        else None
+                    ),
+                    context=cn.context or None,
+                    chunk_type=cn.chunk_type,
+                    has_table=cn.has_table,
+                    page_number=cn.page_number,
                 )
-                for i, node in enumerate(nodes)
+                for i, cn in enumerate(chunk_nodes)
             ]
             await document_repository.add_chunks(db, chunks)
             document.status = DocumentStatus.ready
             document.page_count = page_count
             document.chunk_count = len(chunks)
+            document.doc_type = doc_meta.get("doc_type")
+            document.issued_date = doc_meta.get("issued_date")
+            document.issuing_body = doc_meta.get("issuing_body")
             document.error_message = None
             await db.commit()
         logger.info(
             "ingest: tài liệu %s xong (%s chunk, %s trang).",
             document_id,
-            len(nodes),
+            len(chunk_nodes),
             page_count,
         )
     except Exception as exc:  # noqa: BLE001 — phải bắt mọi lỗi để đánh dấu failed

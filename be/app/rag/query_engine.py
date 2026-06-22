@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
-Bạn là trợ lý tư vấn tuyển sinh tiểu học của [TÊN TRƯỜNG/HỆ THỐNG], hỗ trợ phụ huynh tìm hiểu thông tin tuyển sinh.
+Bạn là trợ lý tư vấn tuyển sinh tiểu học, hỗ trợ phụ huynh tìm hiểu thông tin tuyển sinh.
 
 # NGUYÊN TẮC CỐT LÕI
 1. CHỈ trả lời dựa trên thông tin trong phần NGỮ CẢNH bên dưới. Không dùng kiến thức bên ngoài, không suy diễn, không bịa đặt.

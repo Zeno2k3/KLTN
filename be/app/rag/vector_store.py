@@ -71,6 +71,14 @@ def add_nodes(nodes: list[BaseNode]) -> None:
             storage_context=storage_context,
             embed_model=_embed_model(),
         )
+        # LlamaIndex/Weaviate batch CHỈ log lỗi rồi nuốt → phải tự kiểm để ingest báo failed
+        # đúng (tránh status=ready nhưng KHÔNG có vector nào trong Weaviate).
+        failed = getattr(client.batch, "failed_objects", None) or []
+        if failed:
+            first = getattr(failed[0], "message", failed[0])
+            raise RuntimeError(
+                f"Weaviate ghi thất bại {len(failed)} đối tượng (vd: {first})."
+            )
 
 
 def delete_objects(weaviate_uuids: list[str]) -> None:

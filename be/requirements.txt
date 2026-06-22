@@ -103,6 +103,8 @@ opentelemetry-semantic-conventions==0.63b1
 packaging==26.2
 pandas==3.0.3
 passlib==1.7.4
+pdfminer.six==20260107
+pdfplumber==0.11.10
 peft==0.19.1
 pillow==12.2.0
 platformdirs==4.10.0
@@ -120,6 +122,7 @@ pydantic-settings==2.14.1
 pydantic_core==2.41.5
 Pygments==2.20.0
 pypdf==6.13.3
+pypdfium2==5.10.1
 pytest==9.1.0
 pytest-asyncio==1.4.0
 pytest-cov==7.1.0
