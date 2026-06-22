@@ -47,6 +47,16 @@ async def add_chunks(db: AsyncSession, chunks: list[DocumentChunk]) -> None:
     await db.flush()
 
 
+async def update_filename(
+    db: AsyncSession, document: Document, filename: str
+) -> Document:
+    """Cập nhật tên hiển thị của tài liệu (chưa commit — tầng trên quản lý)."""
+    document.filename = filename
+    await db.flush()
+    await db.refresh(document)
+    return document
+
+
 async def get_chunk_uuids(db: AsyncSession, document_id: int) -> list[str]:
     """UUID Weaviate của các chunk thuộc tài liệu — để xoá vector tương ứng."""
     stmt = select(DocumentChunk.weaviate_uuid).where(

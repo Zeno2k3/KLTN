@@ -130,6 +130,13 @@ export const documentApi = {
   remove: (id: number) =>
     apiFetch(`/admin/documents/${id}`, { method: "DELETE" }).then((r) => parseEmpty(r)),
 
+  /** Đổi tên hiển thị tài liệu (DB-only) → trả về DTO đã cập nhật. */
+  rename: (id: number, filename: string) =>
+    apiFetch(`/admin/documents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ filename }),
+    }).then((r) => parse<DocumentDTO>(r)),
+
   removeAll: () =>
     apiFetch("/admin/documents", { method: "DELETE" }).then((r) =>
       parse<{ deleted: number }>(r),

@@ -33,6 +33,35 @@ describe("documentApi.fetchFile", () => {
   });
 });
 
+describe("documentApi.rename", () => {
+  it("PATCH đúng URL + body { filename }", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 3,
+          filename: "Tên mới.pdf",
+          file_size: 1,
+          status: "ready",
+          page_count: 1,
+          chunk_count: 1,
+          error_message: null,
+          created_at: "2026-06-12T10:00:00",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await documentApi.rename(3, "Tên mới.pdf");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/admin/documents/3");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({ filename: "Tên mới.pdf" });
+    expect(out.filename).toBe("Tên mới.pdf");
+  });
+});
+
 describe("statsApi.get", () => {
   it("GET /admin/stats kèm query range", async () => {
     const fetchMock = vi.fn().mockResolvedValue(

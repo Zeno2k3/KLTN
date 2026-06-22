@@ -187,6 +187,27 @@ async def delete_document(db, document_id: int) -> None:
         Path(file_path).unlink()
 
 
+async def rename_document(db, document_id: int, filename: str) -> Document:
+    """Đổi tên hiển thị tài liệu trong DB (admin list + bảng trích dẫn + tên file tải về).
+
+    KHÔNG đụng vector Weaviate: metadata ``filename`` của chunk đã ingest nằm trong blob
+    ``_node_content`` (định dạng nội bộ LlamaIndex) → muốn đổi phải re-ingest. Vì vậy chip
+    nguồn ở câu trả lời chat MỚI vẫn hiện tên cũ tới khi re-ingest (hạn chế đã biết)."""
+    filename = (filename or "").strip()
+    if not filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Tên không được rỗng."
+        )
+    document = await document_repository.get_by_id(db, document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài liệu."
+        )
+    document = await document_repository.update_filename(db, document, filename[:512])
+    await db.commit()
+    return document
+
+
 async def get_document_file(db, document_id: int) -> tuple[str, str]:
     """Trả (đường_dẫn_tuyệt_đối, tên_file_gốc) để xem/tải; 404 nếu thiếu bản ghi hoặc file."""
     document = await document_repository.get_by_id(db, document_id)

@@ -7,7 +7,7 @@
 - Định tuyến: [be/app/api/v1/router.py](be/app/api/v1/router.py) gắn các route dưới `/api/v1`.
   - Health: [be/app/api/v1/routes/health.py](be/app/api/v1/routes/health.py)
   - Auth: [be/app/api/v1/routes/auth.py](be/app/api/v1/routes/auth.py) (register/login/google/logout/me/refresh)
-  - **Documents (admin):** [be/app/api/v1/routes/documents.py](be/app/api/v1/routes/documents.py) — `/admin/documents` GET(list)/POST(upload)/DELETE(xoá tất cả), `/{id}` DELETE(xoá lẻ), `/{id}/file?download=` GET(xem inline/tải attachment). Tất cả `require_admin`.
+  - **Documents (admin):** [be/app/api/v1/routes/documents.py](be/app/api/v1/routes/documents.py) — `/admin/documents` GET(list)/POST(upload)/DELETE(xoá tất cả), `/{id}` DELETE(xoá lẻ)/PATCH(đổi tên — DB-only), `/{id}/file?download=` GET(xem inline/tải attachment). Tất cả `require_admin`.
 - Dependencies (current user, role guard `require_admin`): [be/app/api/deps.py](be/app/api/deps.py)
 - Core:
   - Cấu hình (pydantic-settings, đọc `.env`): [be/app/core/config.py](be/app/core/config.py) — gồm `upload_dir/openai_*/weaviate_*/chunk_*/phoenix_*`.

@@ -11,12 +11,13 @@ interface DocsViewProps {
   onDelete: (id: number) => void;
   onDeleteAll: () => void;
   onOpen: (doc: Doc, download: boolean) => void;
+  onRename: (id: number, name: string) => void;
   loading?: boolean;
   error?: string | null;
 }
 
 /** Tab "Cơ sở kiến thức": vùng tải PDF + danh sách tài liệu. */
-export default function DocsView({ docs, onPick, onDelete, onDeleteAll, onOpen, loading, error }: DocsViewProps) {
+export default function DocsView({ docs, onPick, onDelete, onDeleteAll, onOpen, onRename, loading, error }: DocsViewProps) {
   function handleDeleteAll() {
     if (window.confirm(`Xoá tất cả ${docs.length} tài liệu? Hành động này không thể hoàn tác.`)) {
       onDeleteAll();
@@ -48,7 +49,7 @@ export default function DocsView({ docs, onPick, onDelete, onDeleteAll, onOpen, 
 
       <div className="gw-card" style={{ padding: 0, overflow: "hidden" }}>
         {docs.map((d) => (
-          <DocRow key={d.id} doc={d} onDelete={onDelete} onOpen={onOpen} />
+          <DocRow key={d.id} doc={d} onDelete={onDelete} onOpen={onOpen} onRename={onRename} />
         ))}
         {docs.length === 0 && (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-subtle)", fontSize: 15 }}>

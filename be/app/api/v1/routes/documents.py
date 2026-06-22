@@ -20,7 +20,7 @@ from app.api.deps import require_admin
 from app.core.database import get_db
 from app.models.user import User
 from app.repositories import document_repository
-from app.schemas.document import DocumentResponse
+from app.schemas.document import DocumentRenameRequest, DocumentResponse
 from app.services import document_service
 
 router = APIRouter(prefix="/admin/documents", tags=["documents"])
@@ -71,6 +71,18 @@ async def serve_document_file(
         filename=filename,
         content_disposition_type="attachment" if download else "inline",
     )
+
+
+@router.patch("/{document_id}", response_model=DocumentResponse)
+async def rename_document(
+    document_id: int,
+    data: DocumentRenameRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> DocumentResponse:
+    """Đổi tên hiển thị của tài liệu (DB-only)."""
+    document = await document_service.rename_document(db, document_id, data.filename)
+    return DocumentResponse.model_validate(document)
 
 
 @router.delete("", status_code=status.HTTP_200_OK)

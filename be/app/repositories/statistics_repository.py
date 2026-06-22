@@ -19,9 +19,7 @@ from app.models.role import Role
 from app.models.user import User
 
 
-async def count_active_parents(
-    db: AsyncSession, start: datetime, end: datetime
-) -> int:
+async def count_active_parents(db: AsyncSession, start: datetime, end: datetime) -> int:
     """Số phụ huynh (role=``user``) có ÍT NHẤT một tin nhắn ``user`` trong [start, end)."""
     stmt = (
         select(func.count(distinct(Conversation.user_id)))
@@ -39,9 +37,7 @@ async def count_active_parents(
     return int(await db.scalar(stmt) or 0)
 
 
-async def count_conversations(
-    db: AsyncSession, start: datetime, end: datetime
-) -> int:
+async def count_conversations(db: AsyncSession, start: datetime, end: datetime) -> int:
     """Số hội thoại được tạo trong [start, end)."""
     stmt = (
         select(func.count())

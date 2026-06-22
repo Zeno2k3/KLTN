@@ -1,3 +1,5 @@
+@.claude/CODEMAP.md
+
 # Dự án: Agent Tư vấn Tuyển sinh Tiểu học (RAG)
 
 Hệ thống hỏi-đáp RAG tư vấn tuyển sinh tiểu học cho phụ huynh.

@@ -2,6 +2,30 @@
 
 ## Đã xong
 
+- (2026-06-22) **P13 — Admin: đổi tên (rename) tài liệu PDF (DB-only).**
+  - **BE:** `PATCH /api/v1/admin/documents/{id}` body `{filename}` → `document_service.rename_document`
+    (trim + non-empty, 404 nếu thiếu, `repo.update_filename`, commit) → `DocumentResponse`. `require_admin`.
+    Schema `DocumentRenameRequest` (`filename` min_length=1 max_length=512).
+  - **Phạm vi DB-only (cố ý):** chỉ đổi `documents.filename`. KHÔNG đụng vector Weaviate vì metadata
+    `filename` của chunk nằm trong blob `_node_content` (LlamaIndex `to_node` dựng metadata từ đó, không từ
+    property top-level → update property không propagate; re-ingest thì tốn kém). Cập nhật tới: admin list,
+    **bảng trích dẫn chi tiết** (`chat_service.get_document_detail` đọc DB), tên file tải về (`get_document_file`).
+    **Hạn chế đã biết:** chip nguồn ở câu trả lời chat MỚI (`query_engine._build_context` đọc metadata Weaviate)
+    vẫn hiện tên cũ tới khi re-ingest.
+  - **FE:** `documentApi.rename`; `useDocuments.renameDoc` (trim, bỏ qua rỗng, optimistic, refresh()+error khi lỗi);
+    `DocRow` inline-edit (nút bút "Đổi tên" → input; Enter lưu/Esc huỷ/blur lưu; `editingRef` chống lưu 2 lần;
+    focus+select) — mirror `ConversationItem`. Truyền `onRename` qua DocsView/page.
+  - **Test:** BE +5 (rename ok/trim/404/422/403) → **91 passed**; FE +4 hook (optimistic/rỗng/rollback) +1 api
+    (`rename` PATCH URL+body) → **68 passed**. ruff+lint+tsc xanh.
+  - **Verify THẬT:** curl `PATCH` → 200, list phản ánh tên mới; **FE** (preview :3001, CORS-allowed) đăng nhập admin
+    → tab Cơ sở kiến thức có nút "Đổi tên" mỗi dòng → click → input inline focus+pre-fill → gõ tên mới + Enter →
+    server có ngay tên mới (UTF-8 tiếng Việt đúng), 0 lỗi console.
+  - **Review đối nghịch bắt 1 lỗi thật → đã sửa:** (low) đang inline-edit mà bấm thẳng nút Xoá → `onBlur`
+    (mousedown) lưu rename TRƯỚC `onClick` xoá → cùng doc vừa PATCH vừa DELETE → PATCH 404 → hiện lỗi sai.
+    Fix: ẩn nút action khi `editing` (mirror ConversationItem) → khử race. Test `DocRow.test.tsx` (+4): nút biến
+    mất khi sửa, Enter lưu / Esc huỷ / tên không đổi không gọi API. FE **72 passed**.
+  - **Phụ:** gỡ 1 trailing-space trong `query_router.py:48` (prompt) để `ruff check .` xanh — không đổi nội dung prompt.
+
 - (2026-06-22) **P12 — RAG tiền xử lý truy vấn: LLM Router (rag/direct) + Query Rewriting (condense-question).**
   - **Bối cảnh:** pipeline xử lý mỗi câu độc lập, không truyền lịch sử → (1) follow-up đa lượt
     ("thế còn học phí?") truy hồi sai; (2) câu ngoài phạm vi vẫn được trả lời do embedding tương đồng.

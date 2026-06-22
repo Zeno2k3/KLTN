@@ -109,6 +109,25 @@ export function useDocuments() {
     }
   }, [refresh]);
 
+  const renameDoc = useCallback(
+    async (id: number, name: string) => {
+      const next = name.trim();
+      if (!next) return;
+      setDocs((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, name: next } : d)),
+      ); // optimistic
+      try {
+        await documentApi.rename(id, next);
+      } catch (err) {
+        await refresh();
+        setError(
+          err instanceof ApiError ? err.message : "Không đổi tên được tài liệu.",
+        );
+      }
+    },
+    [refresh],
+  );
+
   // Xem/Tải PDF qua apiFetch (tự refresh khi access token hết hạn) → blob, không điều
   // hướng <a> thẳng tới BE (sẽ hiện JSON 401 nếu token ngắn hạn đã hết).
   const openDoc = useCallback(async (doc: Doc, download: boolean) => {
@@ -134,5 +153,5 @@ export function useDocuments() {
     }
   }, []);
 
-  return { docs, loading, error, onPick, deleteDoc, deleteAll, openDoc };
+  return { docs, loading, error, onPick, deleteDoc, deleteAll, renameDoc, openDoc };
 }

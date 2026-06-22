@@ -48,7 +48,9 @@ def _bucketize(
     counts = [0] * _BUCKETS
     for raw in timestamps:
         idx = int((_as_utc(raw) - start) / step)
-        idx = min(max(idx, 0), _BUCKETS - 1)  # kẹp về [0, _BUCKETS-1] kể cả đúng biên phải
+        idx = min(
+            max(idx, 0), _BUCKETS - 1
+        )  # kẹp về [0, _BUCKETS-1] kể cả đúng biên phải
         counts[idx] += 1
     fmt = "%H:%M" if intraday else "%d/%m"
     return [

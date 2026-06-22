@@ -4,15 +4,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DocumentDTO } from "@/app/types/admin";
 
 // Mock lớp gọi API (hoisted để dùng trong factory vi.mock).
-const { listMock, uploadMock, removeMock, removeAllMock, fetchFileMock } = vi.hoisted(
-  () => ({
+const { listMock, uploadMock, removeMock, removeAllMock, renameMock, fetchFileMock } =
+  vi.hoisted(() => ({
     listMock: vi.fn(),
     uploadMock: vi.fn(),
     removeMock: vi.fn(),
     removeAllMock: vi.fn(),
+    renameMock: vi.fn(),
     fetchFileMock: vi.fn(),
-  }),
-);
+  }));
 
 vi.mock("@/app/lib/api", () => ({
   ApiError: class ApiError extends Error {
@@ -27,6 +27,7 @@ vi.mock("@/app/lib/api", () => ({
     upload: uploadMock,
     remove: removeMock,
     removeAll: removeAllMock,
+    rename: renameMock,
     fetchFile: fetchFileMock,
   },
 }));
@@ -55,6 +56,7 @@ afterEach(() => {
   uploadMock.mockReset();
   removeMock.mockReset();
   removeAllMock.mockReset();
+  renameMock.mockReset();
   fetchFileMock.mockReset();
 });
 
@@ -97,6 +99,47 @@ describe("useDocuments", () => {
 
     expect(removeMock).toHaveBeenCalledWith(1);
     expect(result.current.docs).toHaveLength(0);
+  });
+
+  it("đổi tên (optimistic) cập nhật tên + gọi API rename", async () => {
+    listMock.mockResolvedValue([dto({ id: 1, filename: "cu.pdf" })]);
+    renameMock.mockResolvedValue(dto({ id: 1, filename: "moi.pdf" }));
+    const { result } = renderHook(() => useDocuments());
+    await waitFor(() => expect(result.current.docs).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.renameDoc(1, "  moi.pdf  ");
+    });
+
+    expect(renameMock).toHaveBeenCalledWith(1, "moi.pdf"); // đã trim
+    expect(result.current.docs[0].name).toBe("moi.pdf");
+  });
+
+  it("đổi tên rỗng → không gọi API", async () => {
+    listMock.mockResolvedValue([dto({ id: 1, filename: "cu.pdf" })]);
+    const { result } = renderHook(() => useDocuments());
+    await waitFor(() => expect(result.current.docs).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.renameDoc(1, "   ");
+    });
+
+    expect(renameMock).not.toHaveBeenCalled();
+    expect(result.current.docs[0].name).toBe("cu.pdf");
+  });
+
+  it("đổi tên lỗi → refresh đồng bộ + set error", async () => {
+    listMock.mockResolvedValue([dto({ id: 1, filename: "cu.pdf" })]);
+    renameMock.mockRejectedValue(new Error("boom"));
+    const { result } = renderHook(() => useDocuments());
+    await waitFor(() => expect(result.current.docs).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.renameDoc(1, "moi.pdf");
+    });
+
+    expect(result.current.docs[0].name).toBe("cu.pdf"); // refresh kéo lại tên cũ
+    expect(result.current.error).toBeTruthy();
   });
 
   it("xoá tất cả (optimistic) và gọi API removeAll", async () => {

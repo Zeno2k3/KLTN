@@ -241,3 +241,66 @@ async def test_delete_document_also_deletes_chunks(doc_session):
     )
     assert docs_left == 0
     assert chunks_left == 0  # KHÔNG còn chunk mồ côi
+
+
+@pytest.mark.asyncio
+async def test_rename_document(admin_client, monkeypatch, tmp_path):
+    async def fake_ingest(document_id):
+        return None
+
+    monkeypatch.setattr(document_service, "ingest_document", fake_ingest)
+    monkeypatch.setattr(document_service.settings, "upload_dir", str(tmp_path))
+
+    up = await admin_client.post("/api/v1/admin/documents", files=_pdf_file("cu.pdf"))
+    doc_id = up.json()["id"]
+
+    resp = await admin_client.patch(
+        f"/api/v1/admin/documents/{doc_id}",
+        json={"filename": "Quy chế tuyển sinh 2026.pdf"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["filename"] == "Quy chế tuyển sinh 2026.pdf"
+
+    # Danh sách phản ánh tên mới
+    listing = await admin_client.get("/api/v1/admin/documents")
+    assert listing.json()[0]["filename"] == "Quy chế tuyển sinh 2026.pdf"
+
+
+@pytest.mark.asyncio
+async def test_rename_trims_whitespace(admin_client, monkeypatch, tmp_path):
+    async def fake_ingest(document_id):
+        return None
+
+    monkeypatch.setattr(document_service, "ingest_document", fake_ingest)
+    monkeypatch.setattr(document_service.settings, "upload_dir", str(tmp_path))
+
+    up = await admin_client.post("/api/v1/admin/documents", files=_pdf_file())
+    doc_id = up.json()["id"]
+    resp = await admin_client.patch(
+        f"/api/v1/admin/documents/{doc_id}", json={"filename": "  Tên gọn  "}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["filename"] == "Tên gọn"
+
+
+@pytest.mark.asyncio
+async def test_rename_missing_document_returns_404(admin_client):
+    resp = await admin_client.patch(
+        "/api/v1/admin/documents/99999", json={"filename": "x.pdf"}
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_rename_empty_filename_rejected(admin_client):
+    # min_length=1 ở schema → 422; chuỗi chỉ khoảng trắng → service trả 400.
+    blank = await admin_client.patch("/api/v1/admin/documents/1", json={"filename": ""})
+    assert blank.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_rename_forbidden_for_non_admin(user_client):
+    resp = await user_client.patch(
+        "/api/v1/admin/documents/1", json={"filename": "x.pdf"}
+    )
+    assert resp.status_code == 403

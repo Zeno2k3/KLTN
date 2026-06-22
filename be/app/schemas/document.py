@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.base import DocumentStatus
+
+
+class DocumentRenameRequest(BaseModel):
+    """Đổi tên hiển thị của tài liệu (không đổi file trên đĩa)."""
+
+    filename: str = Field(min_length=1, max_length=512)
 
 
 class DocumentResponse(BaseModel):
