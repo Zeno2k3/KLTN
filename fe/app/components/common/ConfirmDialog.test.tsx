@@ -59,4 +59,48 @@ describe("ConfirmDialog", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it("variant=danger: Hủy là nút primary, Xóa là outline đỏ (không nền đỏ đặc)", () => {
+    render(
+      <ConfirmDialog
+        open
+        title="Xóa cuộc trò chuyện"
+        message="m"
+        confirmLabel="Xóa"
+        cancelLabel="Hủy"
+        variant="danger"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const cancelBtn = screen.getByText("Hủy");
+    const confirmBtn = screen.getByText("Xóa");
+    expect(cancelBtn.className).toContain("gw-btn--primary");
+    expect(confirmBtn.className).toContain("gw-btn--danger-outline");
+    expect(confirmBtn.className).not.toMatch(/gw-btn--danger(?!-outline)/);
+  });
+
+  it("click nền (overlay) → onCancel; click trong dialog → không", () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        title="Xóa cuộc trò chuyện"
+        message="m"
+        confirmLabel="Xóa"
+        cancelLabel="Hủy"
+        variant="danger"
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+    const dialog = screen.getByRole("dialog");
+    // Click trong dialog: stopPropagation → không đóng.
+    fireEvent.click(dialog);
+    expect(onCancel).not.toHaveBeenCalled();
+    // Click nền overlay (cha của dialog) → đóng.
+    const overlay = dialog.parentElement as HTMLElement;
+    fireEvent.click(overlay);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });

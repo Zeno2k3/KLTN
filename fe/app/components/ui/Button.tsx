@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { CSSProperties, MouseEventHandler, ReactNode } from "react";
 
-type Variant = "primary" | "secondary" | "ghost" | "accent" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "accent" | "danger" | "danger-outline";
 type Size = "sm" | "md" | "lg";
 
 interface ButtonProps {
