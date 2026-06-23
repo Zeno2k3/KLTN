@@ -138,14 +138,37 @@ def test_failsafe_on_llm_error(monkeypatch):
 
 def test_failsafe_on_malformed_json(monkeypatch):
     answer = "Câu A [1]."
-    # JSON hợp lệ nhưng verdict THIẾU field bắt buộc → _parse_verdicts raise → fail-safe.
-    payload = json.dumps({"verdicts": [{"sentence_id": 0}]})
-    monkeypatch.setattr(citation_verifier, "_get_llm", lambda: _fake_llm(payload))
+    # Output KHÔNG parse được JSON (model trả prose) → _parse_verdicts raise → fail-safe.
+    monkeypatch.setattr(
+        citation_verifier, "_get_llm", lambda: _fake_llm("xin lỗi tôi không chắc")
+    )
 
     result = citation_verifier.verify_answer(answer, "NGỮ CẢNH", _sources(1), "hỏi")
 
     assert result.ok is False
     assert result.answer == answer
+
+
+def test_parse_strips_code_fences_and_skips_bad_verdict(monkeypatch):
+    # Model bọc ```json + 1 verdict thiếu field → vẫn parse được, verdict tốt áp dụng,
+    # verdict hỏng bị bỏ qua (câu đó giữ nguyên).
+    answer = "Câu factual [1]. Câu khác [2]."
+    payload = (
+        "```json\n"
+        '{"verdicts": [\n'
+        '  {"sentence_id": 0, "attributed_indices": [2], "supporting_quote": "q",'
+        ' "supported": true, "in_scope": true, "action": "recite"},\n'
+        '  {"sentence_id": 1}\n'
+        "]}\n```"
+    )
+    monkeypatch.setattr(citation_verifier, "_get_llm", lambda: _fake_llm(payload))
+
+    result = citation_verifier.verify_answer(answer, "NGỮ CẢNH", _sources(1, 2), "hỏi")
+
+    assert result.ok is True
+    assert (
+        result.answer == "Câu factual [2]. Câu khác [2]."
+    )  # câu 0 recite, câu 1 giữ nguyên
 
 
 def test_split_sentences_keeps_markers():

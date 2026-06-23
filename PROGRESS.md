@@ -25,11 +25,18 @@ KHÔNG mô hình fine-tune — máy RAM thấp, không có bản tiếng Việt)
 post-hoc thắng generation-time về faithfulness cho high-stakes (paper 2509.21557).
 
 **Bằng chứng (đã chạy thật):**
-- Gate: `ruff check` PASS · pytest **120 passed** (+8 test verifier, +3 test pipeline);
+- Gate: `ruff check` PASS · pytest **121 passed** (+10 test verifier, +3 test pipeline);
   FE `lint`+`tsc`+`vitest` **75 passed** (+3 test highlight sub-chunk).
 - **Chạy thật `verify_answer` với OpenAI gpt-4o-mini** (kịch bản lớp1/lớp6): câu "lớp 6"
-  `in_scope=False` → **DROP**; answer sạch (`lop6_con_trong_answer=False`); `cited_spans` chứa
-  quote nguyên văn; trace đẩy lên **Phoenix Cloud** (project kltn-rag). Đã dọn script tạm.
+  `in_scope=False` → **DROP**; answer sạch; `cited_spans` chứa quote nguyên văn; trace đẩy lên
+  **Phoenix Cloud** (project kltn-rag).
+- **E2E thật qua HTTP** (uvicorn + Postgres/DBngin + Weaviate 139 chunk + Cohere + OpenAI,
+  `CITATION_VERIFY_ENABLED=true`, đăng nhập thật): `POST /chat/ask` "Đối tượng ưu tiên xét tuyển
+  lớp 1" → **200**, answer **loại bỏ** câu lớp-6 ("học sinh đã hoàn thành chương trình tiểu học…"),
+  `sources` lọc còn [1][2], `cited_spans` **gọn chỉ lớp 1** (không span nào chứa "(đối với lớp 6)").
+- **Chụp SourceDrawer** (FE dev :3000 nạp source mới): trong CÙNG chunk gộp lớp1+lớp6, chỉ đoạn
+  "…đúng độ tuổi quy định (đối với lớp 1)" được `<mark>` tô đậm; phần "(đối với lớp 6); nhóm này
+  cũng bao gồm…" KHÔNG tô. markCount=5, không mark nào chứa "lớp 6".
 
 **File:** mới [citation_verifier.py](be/app/rag/citation_verifier.py),
 [test_citation_verifier.py](be/tests/test_citation_verifier.py); sửa
@@ -40,13 +47,26 @@ post-hoc thắng generation-time về faithfulness cho high-stakes (paper 2509.2
 [SourceChips.tsx](fe/app/chat/_components/SourceChips.tsx). **Không cần migration** (cited_spans
 nằm trong `context_sources` JSONB).
 
-### Việc tiếp theo (cần stack sống — chưa làm)
-- **E2E qua HTTP** (`CITATION_VERIFY_ENABLED=true` + uvicorn + Weaviate có dữ liệu + Cohere + auth):
-  gọi endpoint chat câu lớp 1 thật, dán request+response, **chụp SourceDrawer** thấy chỉ đoạn lớp 1
-  được tô sáng.
-- **rag-eval golden set** (Lớp A đổi prompt mặc định → cần đo before/after scope precision, đảm bảo
-  không under-answer). RAGAS không chạy Py3.14 → đo thủ công như các lần trước.
-- Bật cờ sau khi eval xác nhận cải thiện. Cân nhắc tinh chỉnh prompt judge nếu drop nhầm.
+### rag-eval golden set (thủ công — RAGAS không chạy Py3.14): tìm & sửa 2 lỗi
+Chạy 3 câu vàng (1 dễ off-scope + 2 sạch), so TRƯỚC (chỉ Lớp A) vs SAU (A+B). **Phát hiện 2 lỗi**:
+1. **Off-scope ngầm leak**: câu lớp-6 diễn đạt lại không có chữ "lớp 6" → judge phán `in_scope=True`
+   → không drop. 2. **Over-drop câu META**: judge drop nhầm chào hỏi / disclaimer "chưa có thông tin" /
+   mời liên hệ nhà trường (vì `supported=False`).
+**Sửa prompt judge** ([citation_verifier.py](be/app/rag/citation_verifier.py)): (a) phân loại câu
+DỮ KIỆN vs META — META không cần nguồn, luôn `keep`; (b) suy ra CẤP LỚP từng câu ("đã hoàn thành
+chương trình tiểu học"/"vào lớp 6"/"THCS" = ngoài phạm vi lớp 1); (c) `supporting_quote` lấy đoạn
+NGẮN NHẤT đúng phạm vi (không kèm "(đối với lớp 6)"). **Sau sửa**: Q1 off-scope DROP đúng, Q2/Q3
+giữ câu META (0 false-drop), quote gọn (xác nhận qua drawer).
+
+### Hardening: parse JSON verifier chịu lỗi
+Qua HTTP thấy fail-safe ~30% (LLM json_object thỉnh thoảng bọc ```` ```json ```` hoặc kèm prose).
+`_parse_verdicts` giờ bóc fence + trích `{...}` ngoài cùng; verdict lẻ thiếu field → bỏ qua câu đó
+(giữ nguyên) thay vì nuốt cả lượt. Test mới `test_parse_strips_code_fences_and_skips_bad_verdict`.
+
+### Còn lại
+- Cờ `CITATION_VERIFY_ENABLED` vẫn **tắt mặc định**; bật ở .env khi muốn dùng (đã xác nhận cải thiện).
+- Cosmetic nhỏ: drop câu giữa danh sách đôi khi mất 1 dòng trống (markdown vẫn render ổn).
+- Golden set mới 3 câu — mở rộng thêm nếu cần số liệu đầy đủ hơn.
 
 ---
 

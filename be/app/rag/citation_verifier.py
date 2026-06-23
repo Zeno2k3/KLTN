@@ -94,15 +94,26 @@ huynh, NGỮ CẢNH gồm các nguồn đánh số [1], [2], ... (toàn văn), v
 Với MỖI câu, hãy đối chiếu với NGỮ CẢNH và trả về một verdict:
 1. attributed_indices: (các) số nguồn trong NGỮ CẢNH THỰC SỰ chứa nội dung câu đó. TỰ đối chiếu nội
    dung — BỎ QUA số nguồn mà câu tự gắn. Nếu không nguồn nào chứa → [].
-2. supporting_quote: COPY NGUYÊN VĂN một đoạn ngắn (một cụm/câu) từ nguồn được gán, đúng đoạn làm
-   căn cứ cho câu. KHÔNG diễn giải lại, KHÔNG tự viết. Rỗng "" nếu không có nguồn.
-3. supported: true nếu có ít nhất một nguồn chứa nội dung câu; ngược lại false.
-4. in_scope: true nếu câu KHỚP đúng PHẠM VI câu hỏi (cấp lớp, năm học, khu vực/tuyến, đối tượng).
-   false nếu câu nói về phạm vi KHÁC — ví dụ câu hỏi về "lớp 1" nhưng câu trả lời nói về "lớp 6".
-5. action:
-   - "drop"  nếu in_scope=false HOẶC supported=false.
-   - "recite" nếu supported=true VÀ in_scope=true NHƯNG số nguồn câu tự gắn KHÁC attributed_indices.
-   - "keep"  nếu supported=true, in_scope=true, và số nguồn đã đúng.
+2. supporting_quote: COPY NGUYÊN VĂN đoạn NGẮN NHẤT trong nguồn đủ làm căn cứ cho câu (một cụm
+   từ / mệnh đề — KHÔNG lấy cả câu dài hay cả gạch đầu dòng nếu chỉ một phần liên quan). Đoạn này
+   phải KHỚP ĐÚNG phạm vi câu, KHÔNG bao gồm phần thuộc cấp lớp khác (vd không kèm "(đối với lớp
+   6)"). KHÔNG diễn giải lại, KHÔNG tự viết. Rỗng "" nếu không có nguồn.
+3. PHÂN LOẠI câu trước khi đánh giá:
+   - Câu DỮ KIỆN: nêu thông tin cụ thể (đối tượng, điều kiện, hồ sơ, mốc thời gian, số liệu, độ tuổi...).
+   - Câu META: chào hỏi, lời mời "liên hệ nhà trường", câu nói "hiện chưa có thông tin về vấn đề này",
+     hoặc câu dẫn dắt/giới thiệu ("Đối tượng ưu tiên gồm:", "Ngoài ra,..."). Câu META KHÔNG cần nguồn.
+4. supported:
+   - Câu META → supported = true (không cần nguồn).
+   - Câu DỮ KIỆN → true nếu có ít nhất một nguồn chứa nội dung; false nếu KHÔNG nguồn nào chứa.
+5. in_scope: true nếu câu thuộc đúng PHẠM VI câu hỏi (cấp lớp, năm học, khu vực/tuyến, đối tượng).
+   Câu META → in_scope = true. QUAN TRỌNG — với câu DỮ KIỆN, hãy SUY RA CẤP LỚP của câu:
+   - Câu hỏi về "lớp 1" hỏi về trẻ VÀO lớp 1 (đúng độ tuổi, CHƯA học tiểu học).
+   - Nội dung nói về "học sinh ĐÃ HOÀN THÀNH chương trình tiểu học", "vào lớp 6", "THCS", "lớp đầu cấp
+     trung học cơ sở" → đó là CẤP LỚP KHÁC (lớp 6) → in_scope = false, DÙ cùng một Điều liệt kê chung.
+6. action:
+   - "drop"  nếu in_scope=false HOẶC (câu DỮ KIỆN và supported=false).
+   - "recite" nếu giữ câu (supported ∧ in_scope) NHƯNG số nguồn câu tự gắn KHÁC attributed_indices.
+   - "keep"  các trường hợp còn lại (gồm mọi câu META).
 
 CHỈ in ra JSON đúng cấu trúc sau, không giải thích, không thêm ký tự nào:
 {"verdicts": [{"sentence_id": <int>, "attributed_indices": [<int>...], "supporting_quote": "<str>",
@@ -172,9 +183,23 @@ def _build_messages(
     ]
 
 
+def _extract_json(content: str) -> str:
+    """Bóc rào ```json và lấy khối {...} ngoài cùng — chịu được khi model kèm prose/fences."""
+    content = content.strip()
+    if content.startswith("```"):
+        content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+        content = content.rsplit("```", 1)[0]
+    i, j = content.find("{"), content.rfind("}")
+    return content[i : j + 1] if i >= 0 and j > i else content
+
+
 def _parse_verdicts(content: str, valid_ids: set[int]) -> dict[int, dict]:
-    """Parse JSON verdicts → dict theo sentence_id. Raise nếu cấu trúc hỏng (→ fail-safe)."""
-    data = json.loads(content)
+    """Parse JSON verdicts → dict theo sentence_id.
+
+    Raise (→ fail-safe) nếu KHÔNG parse được JSON hoặc thiếu khóa ``verdicts``. Còn verdict LẺ
+    hỏng (thiếu field) thì BỎ QUA câu đó (sẽ được giữ nguyên ở ``_apply_verdicts``) — không để một
+    verdict lỗi nuốt cả lượt verify."""
+    data = json.loads(_extract_json(content))
     verdicts = data["verdicts"]
     if not isinstance(verdicts, list):
         raise ValueError("verdicts không phải list")
@@ -188,9 +213,8 @@ def _parse_verdicts(content: str, valid_ids: set[int]) -> dict[int, dict]:
         "action",
     )
     for v in verdicts:
-        for key in required:
-            if key not in v:
-                raise ValueError(f"verdict thiếu field '{key}'")
+        if not isinstance(v, dict) or any(k not in v for k in required):
+            continue
         sid = int(v["sentence_id"])
         if sid in valid_ids:
             out[sid] = v
