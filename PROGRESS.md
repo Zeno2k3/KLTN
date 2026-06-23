@@ -1,5 +1,69 @@
 # PROGRESS
 
+## 2026-06-24 — Sửa dialog xác nhận xóa cuộc trò chuyện (FE)
+
+**Vấn đề:** Dialog "Xóa cuộc trò chuyện" đặt sai trọng tâm thị giác — nút phá hủy **"Xóa"** đỏ
+đặc nổi bật nhất (dễ bấm nhầm), nút an toàn **"Hủy"** mờ; nền sau dialog chỉ phủ màu (không blur);
+dialog đóng giật (unmount tức thì).
+
+**Giải pháp (FE thuần, không đụng RAG/DB):**
+- Đảo ưu tiên nút trong [ConfirmDialog.tsx](fe/app/components/common/ConfirmDialog.tsx): Hủy →
+  `variant="primary"` (teal đặc, nổi bật); Xóa (variant `danger`) → map sang `danger-outline`
+  (viền + chữ đỏ, nền trong suốt). Giữ vị trí Hủy-trái / Xóa-phải.
+- Thêm variant `danger-outline` vào [Button.tsx](fe/app/components/ui/Button.tsx) + class
+  `.gw-btn--danger-outline` trong [globals.css](fe/app/globals.css) (tái dùng token `--danger-*`).
+- Overlay: nền `rgba(0,0,0,0.4)` + `backdrop-filter: blur(6px)` (kèm `-webkit-`). Giữ click-nền =
+  hủy + Esc = hủy (đã có sẵn).
+- Transition mở/đóng ~220ms: fade-IN bằng CSS `@keyframes` (`gw-fade-in` overlay, `gw-msg-rise`
+  dialog) — giá trị nghỉ opacity 1 nên KHÔNG kẹt vô hình khi timer/rAF bị tab ẩn throttle;
+  fade-OUT bằng inline transition + giữ DOM 220ms rồi unmount (`mounted` state).
+
+**Lưu ý:** Tránh `requestAnimationFrame`/`setState đồng bộ trong effect` (ESLint
+`react-hooks/set-state-in-effect`) — mount điều chỉnh trong render, unmount qua `setTimeout`.
+
+**Test:** [ConfirmDialog.test.tsx](fe/app/components/common/ConfirmDialog.test.tsx) +2 ca: phân vai
+nút (Hủy=primary, Xóa=danger-outline, không còn danger đặc) và click-nền-đóng.
+
+**Bằng chứng:** Gate xanh (lint + tsc + 77 test). Render thật qua Next dev server (đo computed
+style): Hủy `rgb(31,153,153)`/chữ trắng; Xóa nền trong suốt, viền `rgb(229,72,77)`, chữ
+`rgb(193,52,56)`; overlay `rgba(0,0,0,0.4)` + `blur(6px)`; opacity nghỉ = 1; click nền → fade-out →
+unmount. (`preview_screenshot` treo trong môi trường headless — tab `visibilityState: hidden`.)
+
+## 2026-06-23 — Sửa lỗi font tiếng Việt khi chunking PDF thuần (native-text)
+
+**Vấn đề:** PDF scan trích tốt (OCR Vision), nhưng PDF "thuần" mới thêm bị **lỗi font** trong chunk.
+Chẩn đoán trên file thật: KHÔNG phải symbol-mojibake mà là **diacritic bị strip** — pdfplumber
+(pdfminer.six) đọc ToUnicode hỏng → tiếng Việt KHÔNG DẤU thuần ASCII ("CỘNG HÒA"→"CONG HOA",
+"tuyển sinh"→"tuyen sinh"). OCR cũ chỉ chạy khi text-layer < 50 ký tự nên trang native garbled (>50)
+lọt lưới. PDFium re-extract KHÔNG cứu được (cùng ToUnicode hỏng).
+
+**Giải pháp (phân tầng, fail-safe — tất cả ở tầng [extract.py](be/app/rag/extract.py)):**
+NFC normalize → `_looks_garbled` (heuristic thuần) → PDFium retry → route OCR + drop tables.
+- `_looks_garbled` 4 tín hiệu OR: (s) ký tự rác PUA/control > 2%; (b) symbol lạ > 20%; (a) không
+  khớp stopword (có dấu + ASCII-fold) → scramble; **(d) là tiếng Việt (đủ stopword) NHƯNG mật độ ký
+  tự dấu < 1% → diacritic strip** (tín hiệu chính cho bug này). Gate độ dài 200 ký tự chống oan.
+- Trang garbled: `needs_ocr=True` + `tables=[]` → tái dùng đường OCR Vision sẵn có (ghi đè text).
+  `_needs_ocr(force=True)` bypass short-circuit `_has_real_table`. Cờ tắt `garbled_detect_enabled`.
+- Config mới ([config.py](be/app/core/config.py)): `garbled_detect_enabled`, `garbled_min_chars=200`,
+  `garbled_min_words=20`, `garbled_stopword_ratio=0.03`, `garbled_foreign_ratio=0.20`,
+  `garbled_suspicious_ratio=0.02`, `garbled_diacritic_ratio=0.01`.
+
+**Bằng chứng (đã chạy thật):**
+- Gate: `ruff check` PASS · pytest **132 passed** (+11 test mới [test_extract.py](be/tests/test_extract.py)).
+- Chẩn đoán read-only 3 PDF thật: file lỗi 8931 (13/14 trang garbled) bị bắt; file sạch 5677
+  (29tr, stopword 0.12–0.18) **0 false-positive**; file scan 103ee (text rỗng) đi đường scan cũ.
+- Pipeline thật `extract→OCR` (OpenAI Vision): "CONG HOA XA HOI" → **"CỘNG HÒA XÃ HỘI…"** (14/14 trang).
+- **Re-ingest thật doc id=26** ("Kế hoạch tuyển sinh phường An Khánh"): 46 chunk lỗi → **45 chunk
+  sạch dấu** trong Weaviate+DB (đọc lại `DocumentChunk.content` xác nhận).
+- Eval nhắm doc 26: hỏi có dấu → trả lời đúng "năm học 2026-2027 [1]" trích đúng doc 26.
+
+**rag-eval (RAGAS) — LƯU Ý dataset lệch corpus:** [dataset.json](be/eval/dataset.json) toàn câu "đặc
+khu Côn Đảo" nhưng corpus hiện tại là An Khánh/An Đông (doc 24/25/26) → nhiều câu từ chối đúng →
+RAGAS thấp (faithfulness 0.50, recall 0.56) KHÔNG so được baseline 2026-06-20 (corpus Côn Đảo khác).
+**Không phải hồi quy do thay đổi này** (chỉ đụng extraction doc 26). Đã sửa harness lỗi thời
+[run_pipeline_dump.py](be/eval/run_pipeline_dump.py): `synthesize()` nay trả 3-tuple `(answer,
+sources, context)` nhưng harness unpack 2 → `ValueError`. Cần làm lại dataset khớp corpus mới.
+
 ## 2026-06-23 — Hậu kiểm trích nguồn (post-hoc citation attribution + verification)
 
 **Vấn đề:** câu trả lời lẫn nội dung NGOÀI PHẠM VI câu hỏi (hỏi "đối tượng ưu tiên lớp 1" →

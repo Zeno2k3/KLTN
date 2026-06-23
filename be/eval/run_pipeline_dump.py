@@ -35,7 +35,8 @@ def _answer_with_retry(question: str, tries: int = 4) -> tuple[str, list[str]]:
                 for n in reranked
             ]
             if reranked:
-                answer, _ = query_engine.synthesize(question, reranked)
+                # synthesize() trả (answer, sources, context) — eval chỉ cần answer.
+                answer, _, _ = query_engine.synthesize(question, reranked)
             else:
                 answer = query_engine._NO_CONTEXT_ANSWER
             return answer, contexts

@@ -90,6 +90,27 @@ class Settings(BaseSettings):
         60.0  # timeout mỗi call vision (tránh treo cả lượt OCR)
     )
 
+    # Phát hiện text native-PDF bị mojibake (font VNI/TCVN3 hoặc subset-font thiếu ToUnicode CMap →
+    # pdfminer.six trả codepoint sai). Trang garbled được thử lại bằng PDFium rồi mới fallback OCR.
+    garbled_detect_enabled: bool = True  # cờ tắt khẩn cấp (rollback không cần deploy)
+    garbled_min_chars: int = (
+        200  # gate độ dài: dưới ngưỡng KHÔNG kết luận garbled (chống oan)
+    )
+    garbled_min_words: int = 20  # tối thiểu số từ mới xét tín hiệu stopword
+    garbled_stopword_ratio: float = (
+        0.03  # tỉ lệ trúng stopword tiếng Việt < ngưỡng → nghi garbled
+    )
+    garbled_foreign_ratio: float = (
+        0.20  # tỉ lệ ký tự "lạ" (symbol) > ngưỡng → nghi garbled
+    )
+    # Ký tự RÁC chắc chắn (PUA / control / replacement / unassigned — subset-font thiếu ToUnicode hay
+    # sinh ra) — ngưỡng thấp vì chỉ cần vài % là đủ kết luận font hỏng.
+    garbled_suspicious_ratio: float = 0.02
+    # Mật độ ký tự CÓ DẤU tiếng Việt tối thiểu: font hỏng kiểu PHỔ BIẾN NHẤT map glyph có dấu về chữ
+    # ASCII trần ("CỘNG HÒA"→"CONG HOA") → text là tiếng Việt nhưng ~0% ký tự dấu. Dưới ngưỡng + vẫn
+    # nhận ra là tiếng Việt (đủ stopword) → diacritic bị strip → route OCR để lấy lại dấu.
+    garbled_diacritic_ratio: float = 0.01
+
     # Retrieval hybrid (BM25 keyword + vector semantic, hợp nhất RRF)
     # alpha=1.0 thuần vector, 0.0 thuần keyword; 0.6 ⇒ ưu tiên 60% semantic / 40% keyword.
     hybrid_alpha: float = 0.6
