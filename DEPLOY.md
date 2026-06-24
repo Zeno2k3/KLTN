@@ -43,9 +43,11 @@ Cohere → image ~1GB thay vì ~3.5GB), và blueprint [`render.yaml`](render.yam
      (chưa biết domain FE thì điền tạm, sửa lại ở bước 3).
 4. **Apply** → Render build image, tạo DB + Redis, chạy `alembic upgrade head` rồi khởi động.
 
-> **Lưu ý plan:** `disk` (lưu PDF bền) cần plan **starter** trở lên. Dùng plan **free** thì xoá block
-> `disk:` trong `render.yaml` — nhưng PDF tải lên sẽ mất sau mỗi lần deploy/restart.
-> Redis trong blueprint khai báo `type: keyvalue` (tên mới của Render); tài khoản/CLI cũ dùng `type: redis`.
+> **Lưu ý plan:** `render.yaml` hiện đặt **plan free** (web + Postgres + Redis). Đánh đổi: web **ngủ
+> sau 15 phút** không dùng (cold start ~30-50s khi gọi lại), PDF upload **không lưu bền** (mất sau
+> deploy/restart/ngủ vì free không có disk), Postgres free **hết hạn sau 90 ngày**. Đủ để demo. Muốn
+> chạy liên tục + giữ PDF: đổi web plan sang `starter` và thêm lại block `disk:` (xem ghi chú trong
+> `render.yaml`). Redis khai báo `type: keyvalue` (tên mới của Render); tài khoản/CLI cũ dùng `type: redis`.
 
 ### Cách B — Tạo thủ công
 

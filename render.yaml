@@ -6,7 +6,7 @@
 
 databases:
   - name: kltn-db
-    plan: basic-256mb # hoặc "free" (DB dùng thử 90 ngày). Render Postgres mặc định UTF8 → OK.
+    plan: free # DB free dùng thử 90 ngày (sau đó bị xoá). Render Postgres mặc định UTF8 → OK.
     region: singapore # gần VN nhất
     databaseName: kltn_db
     postgresMajorVersion: "16"
@@ -24,27 +24,24 @@ services:
   - type: web
     name: kltn-backend
     runtime: docker
-    plan: starter # cần >= starter để gắn disk (plan free KHÔNG hỗ trợ disk)
+    plan: free # MIỄN PHÍ: ngủ sau 15 phút không dùng (cold start ~30-50s khi gọi lại).
+    # Nâng lên "starter" (~$7/th) nếu cần chạy liên tục + gắn disk (xem ghi chú UPLOAD_DIR).
     region: singapore
     rootDir: be # build context = thư mục be/
     dockerfilePath: ./Dockerfile # tương đối so với rootDir
     healthCheckPath: /
     autoDeploy: true
 
-    # PDF tải lên cần lưu bền qua các lần deploy. Bỏ block này nếu dùng plan free
-    # (khi đó storage/ là tạm, mất sau mỗi deploy/restart).
-    disk:
-      name: uploads
-      mountPath: /app/storage
-      sizeGB: 1
-
+    # LƯU Ý plan free KHÔNG có disk → storage/ là TẠM (PDF upload mất sau mỗi deploy/restart/ngủ).
+    # Đủ để demo. Muốn lưu bền: nâng plan >= starter rồi thêm lại block:
+    #   disk: { name: uploads, mountPath: /app/storage, sizeGB: 1 }
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: DEBUG
         value: "false"
       - key: UPLOAD_DIR
-        value: /app/storage/uploads
+        value: /app/storage/uploads # tạm trên free; trỏ vào disk khi nâng plan
 
       # Cookie xuyên domain (FE vercel.app ↔ BE onrender.com) → bắt buộc SameSite=None + Secure
       - key: COOKIE_SECURE
