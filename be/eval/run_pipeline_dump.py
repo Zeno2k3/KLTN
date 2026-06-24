@@ -12,24 +12,40 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 import time
 from pathlib import Path
 
-from llama_index.core.schema import MetadataMode
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.core.config import settings
-from app.rag import query_engine
+from llama_index.core.schema import MetadataMode  # noqa: E402
+
+from app.core.config import settings  # noqa: E402
+from app.core.observability import init_tracing  # noqa: E402
+from app.rag import query_engine, query_filters  # noqa: E402
 
 logging.disable(logging.WARNING)
 
 _DATASET = Path(__file__).parent / "dataset.json"
 
 
-def _answer_with_retry(question: str, tries: int = 4) -> tuple[str, list[str]]:
-    """Pipeline 1 câu, retry khi lỗi mạng (SSL handshake/timeout hay xảy ra với cloud)."""
+def _answer_with_retry(
+    question: str, use_filter: bool, tries: int = 4
+) -> tuple[str, list[str]]:
+    """Pipeline 1 câu, retry khi lỗi mạng (SSL handshake/timeout hay xảy ra với cloud).
+
+    ``use_filter``: mô phỏng đúng đường ``answer_question`` của Nhóm B — dựng MetadataFilters từ câu
+    hỏi (extract_filters) + fallback-on-empty (filter rỗng → retry không filter)."""
     for attempt in range(1, tries + 1):
         try:
-            reranked = query_engine.retrieve_and_rerank(question)
+            filters = query_filters.extract_filters(question) if use_filter else None
+            reranked = query_engine.retrieve_and_rerank(question, filters)
+            if (
+                not reranked
+                and filters is not None
+                and settings.filter_fallback_on_empty
+            ):
+                reranked = query_engine.retrieve_and_rerank(question, None)
             contexts = [
                 n.node.get_content(metadata_mode=MetadataMode.NONE).strip()
                 for n in reranked
@@ -48,19 +64,41 @@ def _answer_with_retry(question: str, tries: int = 4) -> tuple[str, list[str]]:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--reranker", default=None, help="ghi đè settings.rerank_model để A/B")
+    ap.add_argument(
+        "--reranker", default=None, help="ghi đè settings.rerank_model để A/B"
+    )
     ap.add_argument("--out", required=True)
+    ap.add_argument(
+        "--filter",
+        action="store_true",
+        help="bật metadata filter Nhóm B (extract_filters + fallback) như answer_question",
+    )
+    ap.add_argument(
+        "--dataset",
+        default=None,
+        help="đường dẫn dataset JSON (mặc định eval/dataset.json) — dùng subset khi chỉ ingest 1 doc",
+    )
     args = ap.parse_args()
     if args.reranker:
         settings.rerank_model = args.reranker
 
-    data = json.loads(_DATASET.read_text(encoding="utf-8"))
-    print("RERANKER:", settings.rerank_model, "| top_n:", settings.rerank_top_n)
+    init_tracing()  # OTEL → Phoenix (script standalone không có lifespan app → phải tự bật)
+
+    dataset_path = Path(args.dataset) if args.dataset else _DATASET
+    data = json.loads(dataset_path.read_text(encoding="utf-8"))
+    print(
+        "RERANKER:",
+        settings.rerank_model,
+        "| top_n:",
+        settings.rerank_top_n,
+        "| filter:",
+        args.filter,
+    )
     out = []
     for i, item in enumerate(data, start=1):
         question = item["question"]
         t0 = time.perf_counter()
-        answer, contexts = _answer_with_retry(question)
+        answer, contexts = _answer_with_retry(question, use_filter=args.filter)
         print(f"[{i}/{len(data)}] ({time.perf_counter() - t0:.1f}s) {question[:50]}")
         print(f"    -> {answer[:90]}")
         out.append(

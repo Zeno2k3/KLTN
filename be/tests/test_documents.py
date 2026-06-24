@@ -59,6 +59,31 @@ async def test_upload_rejects_non_pdf(admin_client, monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_upload_accepts_docx(admin_client, monkeypatch, tmp_path):
+    async def fake_ingest(document_id):
+        return None
+
+    monkeypatch.setattr(document_service, "ingest_document", fake_ingest)
+    monkeypatch.setattr(document_service.settings, "upload_dir", str(tmp_path))
+
+    resp = await admin_client.post(
+        "/api/v1/admin/documents",
+        files={
+            "file": (
+                "Kế hoạch 2026 - 2027 phường Tân Bình.docx",
+                b"PK\x03\x04 fake docx bytes",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["filename"] == "Kế hoạch 2026 - 2027 phường Tân Bình.docx"
+    # Lưu với ĐUÔI .docx (để ingest định tuyến extract đúng).
+    assert len(list(tmp_path.glob("*.docx"))) == 1
+    assert list(tmp_path.glob("*.pdf")) == []
+
+
+@pytest.mark.asyncio
 async def test_list_documents(admin_client, monkeypatch, tmp_path):
     async def fake_ingest(document_id):
         return None
@@ -241,6 +266,46 @@ async def test_delete_document_also_deletes_chunks(doc_session):
     )
     assert docs_left == 0
     assert chunks_left == 0  # KHÔNG còn chunk mồ côi
+
+
+@pytest.mark.asyncio
+async def test_chunk_table_data_roundtrip(doc_session):
+    """Nhóm C: cột table_data (JSON) lưu + đọc lại đúng lưới bảng qua DB (SQLite test)."""
+    doc = await document_repository.create(
+        doc_session,
+        Document(
+            filename="hp.pdf",
+            file_path="/tmp/hp.pdf",
+            file_size=1,
+            status=DocumentStatus.ready,
+        ),
+    )
+    grid = {"grid": [["Khoản mục", "Số tiền"], ["Học phí", "500000"]]}
+    await document_repository.add_chunks(
+        doc_session,
+        [
+            DocumentChunk(
+                document_id=doc.id,
+                chunk_index=0,
+                content="| Khoản mục | Số tiền |",
+                has_table=True,
+                chunk_type="table",
+                table_data=grid,
+            ),
+            DocumentChunk(document_id=doc.id, chunk_index=1, content="văn bản thường"),
+        ],
+    )
+    await doc_session.commit()
+
+    rows = (
+        await doc_session.scalars(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == doc.id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+    ).all()
+    assert rows[0].table_data == grid  # JSON round-trip đúng lưới
+    assert rows[1].table_data is None  # chunk text không có lưới
 
 
 @pytest.mark.asyncio

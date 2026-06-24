@@ -1,5 +1,138 @@
 # PROGRESS
 
+## 2026-06-24 — Thay tiền xử lý PDF/DOCX bằng LlamaParse + LLM chunking trên markdown
+
+**Bối cảnh:** Bỏ pipeline trích xuất cũ (pdfplumber + OCR Vision + python-docx + xử lý font lỗi) →
+LlamaParse (cloud) parse PDF/DOCX → markdown sạch theo trang (server lo OCR/bảng/font/dấu), rồi LLM
+chunk trên markdown. Plan: `C:\Users\mquan\.claude\plans\glistening-kindling-origami.md`.
+
+**Quyết định:** markdown-native tới chunking · xóa hẳn pipeline cũ · nối cả tài liệu (Điều/Khoản tràn
+trang KHÔNG bị cắt) · LLM chunking (ghép verbatim + validate phân hoạch + fallback) · metadata GIỮ
+NGUYÊN 12 (Weaviate) + 5 (DB) trường, KHÔNG migration.
+
+**LlamaParse qua REST httpx (KHÔNG SDK):** SDK `llama-cloud`/`llama-cloud-services` dùng `pydantic.v1`
+→ VỠ import trên Py3.14 (`no validator found for UndefinedType`). Dùng REST trực tiếp
+(`api.cloud.llamaindex.ai/api/v1/parsing`: upload→poll→`result/json`). 0 dep mới (httpx có sẵn). Kết quả
+per-page có `items` ĐÃ PHÂN LOẠI (heading/text/table + `rows` grid bảng) → dùng làm block nguyên tử
+(bỏ regex `structure.py`). Header/footer LlamaParse tách sẵn → `md` sạch (bỏ `clean.py`). Job CACHE
+theo nội dung.
+
+**File MỚI:** [parse.py](be/app/rag/parse.py) (ParsedPage/ParsedBlock, span `rag.ingest.parse`),
+[md_chunker.py](be/app/rag/md_chunker.py) (LLM gộp block→ChunkNode; port `_make_node`/`_doc_ref_id`/
+`_validate_partition`; bảng→chunk riêng, `table_data` từ `rows`; prompt mới `_CHUNK_SYSTEM_PROMPT`).
+**XÓA:** `extract.py`, `ocr.py`, `docx_extract.py`, `clean.py`, `chunker.py`, `structure.py`. **SỬA:**
+[document_service.py](be/app/services/document_service.py) (`ingest_document`: parse→doc_metadata+
+title_metadata→md_chunker→add_nodes→save; bỏ routing .docx/OCR/clean), [doc_metadata.py](be/app/rag/doc_metadata.py)
+(đọc `ParsedPage.md`, strip `#`/`*`), [ingest.py](be/app/rag/ingest.py) (chỉ còn `count_tokens`),
+[config.py](be/app/core/config.py) (thêm `llama_cloud_api_key`/`llamaparse_*`; bỏ `ocr_*`/`garbled_*`/
+`clean_*`; giữ `chunk_llm_*`/`chunker_model`). `requirements*.txt` gỡ python-docx/pdfplumber/pypdf/
+pypdfium2/pdfminer.six. `.env.example` thêm `LLAMA_CLOUD_API_KEY`.
+
+**Kiểm chứng (CHẠY THẬT, log thật):** `ruff` sạch · `pytest` **152 passed** (+test_parse/test_md_chunker/
+test_doc_metadata; xóa test_extract/ocr/docx/clean/chunker) · **parse + LLM chunk THẬT** PDF 18 trang →
+47 chunk (4 bảng): LLM gộp đúng mục 4–9 bị LlamaParse cắt nhầm `# 4.` vào Phần A; heading_path lồng
+`['B...','I...']`; nối liền câu ngắt trang; `table_data` grid đúng (ô rỗng=None). DOCX 1 trang → 2 chunk
+OK · **FULL ingest THẬT** (Postgres+Weaviate+OpenAI+LlamaParse) doc test → DB chunk + `weaviate_uuid` +
+`table_data`, doc_type/ward/school_year đúng, rồi XÓA dọn (gỡ vector+file).
+
+**rag-eval (RAGAS) — ĐÃ CHẠY (theo yêu cầu: xóa toàn bộ corpus, ingest 1 PDF Bình Thạnh qua pipeline mới,
+eval 8 câu Bình Thạnh+chung = dataset[4:], filter BẬT):** dump
+[eval/results/llamaparse_bt.json](be/eval/results/llamaparse_bt.json) · venv ragas 3.11 · Cohere
+`rerank-multilingual-v3.0` top_n=6 · gpt-4o-mini.
+
+| Metric | Pipeline MỚI (LlamaParse, 8 câu) | Baseline CŨ (README: 12 câu, 2 doc, filter) |
+|---|---|---|
+| faithfulness | **0.8333** | 0.8333 |
+| answer_relevancy | 0.4692 | 0.4632 |
+| context_precision (w/ ref) | 0.8296 | 0.8217 |
+| context_recall | **1.0000** | 0.8750 |
+
+Không so trực tiếp (8 câu/1 doc vs 12 câu/2 doc) nhưng pipeline mới **bằng/nhỉnh** mọi metric; `context_recall`
+lên **1.0** (chunk LlamaParse truy hồi đủ ngữ cảnh), faithfulness giữ 0.83 (không tăng bịa). `answer_relevancy`
+thấp do câu từ chối học phí (Q12) bị RAGAS chấm ~0 (đúng kỳ vọng). Thêm `--dataset` cho run_pipeline_dump.py.
+
+**Sửa Phoenix trace (bug):** script standalone (eval/ingest) KHÔNG gọi `init_tracing()` (chỉ chạy trong
+lifespan app) → Phoenix TRỐNG. Đã thêm `init_tracing()` vào [run_pipeline_dump.py](be/eval/run_pipeline_dump.py)
++ [ingest_docs.py](be/eval/ingest_docs.py). Verify THẬT: query + re-ingest sinh trace ở project `kltn-rag`
+(`SimpleSpanProcessor` export ngay; spans `rag.ingest.parse`/`rag.ingest.chunk` + auto-instrument LLM/embedding).
+
+**Trạng thái corpus + còn lại:** đã **XÓA TOÀN BỘ** 5 doc cũ (theo yêu cầu) → Weaviate/DB giờ CHỈ còn
+Bình Thạnh (46 chunk pipeline mới). Muốn dùng production đầy đủ phải **re-ingest** các doc khác (An Đông/
+An Khánh/Côn Đảo…) qua pipeline mới. FE không đổi (vẫn nhận .pdf/.docx).
+
+## 2026-06-24 — Hỗ trợ định dạng DOCX (python-docx) — tái dùng pipeline từ bước [2]
+
+**Bối cảnh:** Trước đó chỉ nhận PDF (DOCX → 415). Thêm hỗ trợ `.docx` mà KHÔNG đụng pipeline lõi —
+nhờ kiến trúc đã tách `list[PageBlock]` làm ranh giới.
+
+- **`python-docx==1.2.0`** (lxml 6.1.1 có sẵn trên Py3.14) → requirements.txt + requirements-deploy.txt.
+- **[be/app/rag/docx_extract.py](be/app/rag/docx_extract.py)** (MỚI): `extract_docx(path)->list[PageBlock]`
+  — `doc.paragraphs` (text, KHÔNG gồm ô bảng) + `doc.tables` (lưới ô = None nếu rỗng). DOCX không có
+  trang → 1 PageBlock, `needs_ocr=False`. KHÔNG cần OCR/garbled.
+- **Định tuyến theo đuôi** ([document_service.py](be/app/services/document_service.py)): `save_upload`
+  nhận `.pdf`/`.docx` (lưu đúng đuôi), `create_document` mime theo đuôi, `ingest_document` route
+  `.docx`→extract_docx / pdf→extract_with_tables (OCR tự bỏ qua). `_ALLOWED_EXT` + `media_type_for`.
+  Route serve file dùng media_type theo đuôi. FE [PdfDropzone.tsx](fe/app/admin/_components/PdfDropzone.tsx)
+  `accept` + nhãn `.pdf, .docx`.
+- **Sửa [title_metadata.py](be/app/rag/title_metadata.py)**: dùng `Path(name).stem` (bỏ MỌI đuôi) —
+  trước chỉ strip `.pdf$` nên `.docx` kẹt vào tên ward.
+
+**Kiểm chứng (đã chạy thật):** `ruff` sạch · `pytest` **177 passed** (+5: test_docx, upload-docx,
+title-docx) · FE `lint`+`tsc`+`vitest` **77 passed** · **ingest 1 .docx thật end-to-end**:
+ward=`Tân Bình`, year=`2026-2027`, type=`ke_hoach`, 4 chunk — chunk bảng có
+`table_data=[['Bậc học','Chỉ tiêu'],['Lớp 1','1.234'],['Lớp 6','987']]` [C]; filter
+`{ward,school_year}` retrieve trả đúng 4 chunk từ file .docx [B]. (Doc test bịa đã xóa khỏi Weaviate.)
+**Hạn chế:** ô gộp (merged cell) docx có thể lặp; xem inline docx trên trình duyệt sẽ tải về.
+
+## 2026-06-24 — Hoàn thiện tiền xử lý: 3 nhóm (C table_data + QA · A clean · B metadata filter)
+
+**Bối cảnh:** Đối chiếu pipeline tiền xử lý với 5 yêu cầu → #1 (trích scan/bảng) đạt; #2 làm sạch,
+#3 bảng cấu trúc, #4 metadata lọc, #5 QA mới đạt một phần/chưa có. Triển khai theo thứ tự rủi ro
+tăng dần C→A→B. Plan: `C:\Users\mquan\.claude\plans\toasty-greeting-finch.md`.
+
+**Nhóm C — bảng cấu trúc + QA mẫu** (rủi ro hồi quy ~0; không đổi embed/retrieval):
+- `ChunkNode.table_data` mang lưới bảng thô; cột `DocumentChunk.table_data` JSON
+  ([be/app/models/document.py](be/app/models/document.py)); persist ở [document_service.py](be/app/services/document_service.py).
+  Migration `c3d4e5f6a7b8` (revises b2c3d4e5f6a7).
+- Script READ-ONLY [be/scripts/qa_sample.py](be/scripts/qa_sample.py): lấy mẫu ngẫu nhiên + cờ toàn
+  vẹn (EMPTY_CONTENT, TABLE_NO_DATA, CONTEXT_IN_CONTENT, TOKEN_OUTLIER…), exit≠0 nếu cờ nặng.
+- **Phát hiện:** pdfplumber over-detect bảng — dòng tiêu đề trang 1 bị tách thành "bảng" 14 cột vụn
+  (false-positive). table_data carry verbatim (đúng); là vấn đề table-detection upstream, ngoài scope.
+
+**Nhóm A — làm sạch** ([be/app/rag/clean.py](be/app/rag/clean.py)): gỡ header/footer lặp (band+tần
+suất khuôn, digit→#), gỡ số trang, gộp khoảng trắng, nối từ ngắt dòng, chuẩn dấu câu. BẢO TOÀN `\n`
+(Khoản nguyên tử); KHÔNG đụng bảng. Chèn **SAU** `extract_doc_metadata` (cần letterhead cho
+issuing_body) **TRƯỚC** `build_nodes`. Cờ `clean_*` (config). PDF thật 18 trang: số trang "2" đầu
+trang bị gỡ, nội dung giữ nguyên.
+
+**Nhóm B — metadata lọc TỪ TÊN FILE** (quyết định với user: parse từ title, KHÔNG từ nội dung; địa
+bàn cấp **phường/xã giữ nguyên**, không quy về quận/huyện):
+- [be/app/rag/title_metadata.py](be/app/rag/title_metadata.py): parse năm học (chịu `2026 - 2027` /
+  `2026 2027` / `20262027` → `2026-2027`) + phường/xã (sau "phường|xã|đặc khu"). Canonical theo
+  whitelist [be/app/rag/wards_data.py](be/app/rag/wards_data.py) (**156 phường/xã sinh từ corpus thật
+  158 file**). [be/app/rag/query_filters.py](be/app/rag/query_filters.py): `extract_filters` dựng
+  `MetadataFilters` (EQ, AND) từ câu hỏi; ward qua whitelist-substring (tránh false-positive "xã hội").
+- Cột `Document.school_year/ward` (migration `d4e5f6a7b8c9`); thêm vào `node.metadata` (property lọc
+  Weaviate, excluded khỏi embed/LLM). Nối vào [query_engine.py](be/app/rag/query_engine.py)
+  `answer_question` (đang `filters=None`) + **fallback-on-empty**. Schema `DocumentResponse` +2 trường.
+
+**Kiểm chứng (đã chạy thật):** `ruff` sạch · `pytest` **172 passed** (+36 test mới: test_clean,
+test_qa_sample, test_title_metadata, test_query_filters, mở rộng test_chunker/test_documents/test_query_engine)
+· 2 migration up/down/up trên **Postgres thật** OK · PDF thật: trích table_data (bảng trang 13 7×4
+đúng) + clean gỡ số trang · `extract_filters` câu hỏi thật: "phường Bình Thạnh năm học 2026-2027"→
+{ward,school_year}, "Củ Chi"→{ward} (không cần từ khóa), "xã hội hóa"→không lọc.
+
+**RAGAS + live query (đã chạy thật 2026-06-24):**
+- Dựng lại `eval/dataset.json` (12 câu, grounded Côn Đảo + Bình Thạnh, 8/12 kích hoạt filter). Script
+  mới `eval/ingest_docs.py` (ingest qua pipeline thật) + thêm cờ `--filter` cho `run_pipeline_dump.py`.
+- **Re-ingest thật** 2 doc qua pipeline A+B+clean: Bình Thạnh (ward=Bình Thạnh, 80 chunk), Côn Đảo
+  (ward=Côn Đảo, 28 chunk) — metadata set đúng → Nhóm B chạy end-to-end. Filter ở query-time lấy đúng
+  doc (Bình Thạnh "1.159 HS", Cao Văn Ngọc…).
+- **RAGAS** (so filter TẮT vs BẬT, cùng corpus đã clean): faithfulness **0.75→0.83** (+0.083);
+  precision/recall lệch nhẹ trong nhiễu (corpus 2 phường → filter muted, lợi ích thật cần đủ 158 phường).
+- CÒN: cô lập Nhóm A (clean) cần re-ingest `CLEAN_ENABLED=false`; eval trên full corpus 158 doc (tốn
+  hơn). Số/diễn giải đầy đủ ở [be/eval/README.md](be/eval/README.md).
+
 ## 2026-06-24 — Cấu hình deploy: BE → Render/Railway (Docker), FE → Vercel
 
 **Vấn đề:** Deploy `be/` lên Vercel lỗi `ModuleNotFoundError: No module named 'setuptools.backends'`.

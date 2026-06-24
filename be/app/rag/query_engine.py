@@ -26,6 +26,7 @@ from llama_index.llms.openai import OpenAI
 from opentelemetry import trace
 
 from app.core.config import settings
+from app.rag import query_filters
 from app.rag.query_rewriter import rewrite_query
 from app.rag.query_router import ROUTE_DIRECT, route_query
 from app.rag.retriever import hybrid_retrieve
@@ -302,7 +303,17 @@ def answer_question(
             effective_query = rewrite_query(query_text, history)
         span.set_attribute("rag.rewritten_query", effective_query)
 
+        # Lọc metadata từ CÂU HỎI (năm học + phường/xã) — chỉ khi caller chưa truyền filters sẵn.
+        if filters is None and settings.query_filter_enabled:
+            filters = query_filters.extract_filters(effective_query)
+        span.set_attribute("rag.filtered", filters is not None)
+
         reranked = retrieve_and_rerank(effective_query, filters)
+        # Fallback: filter ra rỗng → thử lại KHÔNG filter (tránh "biến mất" tài liệu do over-filter
+        # hoặc object Weaviate cũ thiếu property mới).
+        if not reranked and filters is not None and settings.filter_fallback_on_empty:
+            span.set_attribute("rag.filter.fallback", True)
+            reranked = retrieve_and_rerank(effective_query, None)
         span.set_attribute("rag.reranked", len(reranked))
         if not reranked:
             return AnswerResult(

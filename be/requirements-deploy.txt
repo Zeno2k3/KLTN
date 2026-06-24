@@ -101,8 +101,6 @@ opentelemetry-semantic-conventions==0.63b1
 packaging==26.2
 pandas==3.0.3
 passlib==1.7.4
-pdfminer.six==20260107
-pdfplumber==0.11.10
 pillow==12.2.0
 platformdirs==4.10.0
 pluggy==1.6.0
@@ -118,8 +116,6 @@ pydantic-extra-types==2.11.1
 pydantic-settings==2.14.1
 pydantic_core==2.41.5
 Pygments==2.20.0
-pypdf==6.13.3
-pypdfium2==5.10.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 python-jose==3.5.0

@@ -27,4 +27,7 @@ class DocumentResponse(BaseModel):
     page_count: int | None = None
     chunk_count: int
     error_message: str | None = None
+    # Metadata lọc (parse từ tên file) — hiển thị cho admin.
+    school_year: str | None = None
+    ward: str | None = None
     created_at: datetime

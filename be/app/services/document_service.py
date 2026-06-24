@@ -20,7 +20,13 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.base import DocumentStatus
 from app.models.document import Document, DocumentChunk
-from app.rag import chunker, doc_metadata, extract, ocr, vector_store
+from app.rag import (
+    doc_metadata,
+    md_chunker,
+    parse,
+    title_metadata,
+    vector_store,
+)
 from app.repositories import document_repository
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,9 @@ logger = logging.getLogger(__name__)
 # Gốc be/ (…/be/app/services/document_service.py → parents[2] = be/)
 _BE_ROOT = Path(__file__).resolve().parents[2]
 _PDF_MIME = "application/pdf"
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# Định dạng chấp nhận: đuôi file → MIME. Cả PDF lẫn DOCX đều parse qua LlamaParse (cloud).
+_ALLOWED_EXT = {".pdf": _PDF_MIME, ".docx": _DOCX_MIME}
 _MAX_ERROR_LEN = 1000
 
 
@@ -39,15 +48,24 @@ def _upload_root() -> Path:
     return root
 
 
+def media_type_for(file_path: str) -> str:
+    """MIME để phục vụ file theo đuôi (PDF/DOCX); mặc định octet-stream."""
+    return _ALLOWED_EXT.get(Path(file_path).suffix.lower(), "application/octet-stream")
+
+
 async def save_upload(upload: UploadFile) -> tuple[str, int, str]:
-    """Validate (PDF + dung lượng) rồi lưu ra đĩa. Trả (đường_dẫn, kích_thước_byte, tên_gốc)."""
+    """Validate (PDF/DOCX + dung lượng) rồi lưu ra đĩa. Trả (đường_dẫn, kích_thước_byte, tên_gốc).
+
+    Lưu file với ĐUÔI chuẩn (.pdf/.docx) để ``ingest_document`` định tuyến extract đúng theo định dạng."""
     filename = upload.filename or "tai-lieu.pdf"
-    is_pdf = filename.lower().endswith(".pdf") or upload.content_type == _PDF_MIME
-    if not is_pdf:
+    ext = Path(filename).suffix.lower()
+    if ext not in _ALLOWED_EXT and upload.content_type not in _ALLOWED_EXT.values():
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Chỉ chấp nhận tệp PDF.",
+            detail="Chỉ chấp nhận tệp PDF hoặc DOCX.",
         )
+    if ext not in _ALLOWED_EXT:  # đuôi lạ nhưng MIME hợp lệ → suy đuôi từ MIME
+        ext = next(e for e, m in _ALLOWED_EXT.items() if m == upload.content_type)
 
     content = await upload.read()
     size = len(content)
@@ -60,7 +78,7 @@ async def save_upload(upload: UploadFile) -> tuple[str, int, str]:
             detail=f"Tệp vượt quá {settings.max_upload_mb} MB.",
         )
 
-    dest = _upload_root() / f"{uuid_lib.uuid4().hex}.pdf"
+    dest = _upload_root() / f"{uuid_lib.uuid4().hex}{ext}"
     dest.write_bytes(content)
     return str(dest), size, filename
 
@@ -78,7 +96,7 @@ async def create_document(
         filename=filename,
         file_path=file_path,
         file_size=file_size,
-        mime_type=_PDF_MIME,
+        mime_type=_ALLOWED_EXT.get(Path(file_path).suffix.lower(), _PDF_MIME),
         uploaded_by=uploaded_by,
         status=DocumentStatus.processing,
     )
@@ -90,8 +108,8 @@ async def create_document(
 
 
 async def ingest_document(document_id: int) -> None:
-    """Tác vụ nền: trích xuất (pdfplumber) → auto-extract metadata → structure-aware + LLM chunk →
-    embed → ghi Weaviate → lưu chunk → status=ready.
+    """Tác vụ nền: LlamaParse (PDF/DOCX → markdown theo trang) → auto-extract metadata →
+    LLM chunk trên markdown → embed → ghi Weaviate → lưu chunk → status=ready.
 
     Lỗi bất kỳ → status=failed kèm lý do; cố gắng gỡ vector đã ghi để tránh rác."""
     async with AsyncSessionLocal() as db:
@@ -103,39 +121,33 @@ async def ingest_document(document_id: int) -> None:
         filename = document.filename
 
     try:
-        # 1) Trích xuất text + bảng theo trang (CPU-bound → thread). Đánh dấu trang scan cần OCR.
-        ocr_min = settings.ocr_min_chars if settings.ocr_enabled else 0
-        pages = await asyncio.to_thread(
-            extract.extract_with_tables, file_path, ocr_min
-        )
-
-        # 1b) OCR fallback cho trang scan (render + vision-LLM → ghi đè page.text). Có mạng → thread.
-        if settings.ocr_enabled and any(p.needs_ocr for p in pages):
-            pages = await asyncio.to_thread(ocr.ocr_pages, file_path, pages)
-
-        has_content = any(p.text.strip() for p in pages) or any(p.tables for p in pages)
+        # 1) Parse PDF/DOCX → markdown sạch theo trang qua LlamaParse (cloud lo OCR/bảng/font/dấu).
+        # Mạng + chờ job → thread. Trả list[ParsedPage] (md + blocks đã phân loại heading/text/table).
+        pages = await asyncio.to_thread(parse.parse_document, file_path)
+        has_content = any(p.md or p.blocks for p in pages)
         if not has_content:
-            raise ValueError(
-                "Không trích xuất được văn bản từ PDF (kể cả sau khi OCR)."
-            )
+            raise ValueError("Không trích xuất được nội dung từ tài liệu (LlamaParse rỗng).")
         page_count = len(pages)
 
-        # 2) Auto-extract metadata cấp văn bản (regex + LLM xác nhận; có mạng → thread).
+        # 2) Auto-extract metadata cấp văn bản (regex + LLM xác nhận trên markdown đầu; mạng → thread).
         doc_meta = await asyncio.to_thread(
             doc_metadata.extract_doc_metadata, pages, filename
         )
+        # 2a) Metadata lọc truy xuất parse TỪ TÊN FILE (năm học + phường/xã) — hàm thuần, không mạng.
+        # Gộp vào doc_meta để build_nodes đẩy vào node.metadata (property lọc Weaviate).
+        title_meta = title_metadata.parse_title_metadata(filename)
+        doc_meta["school_year"] = title_meta.get("school_year")
+        doc_meta["ward"] = title_meta.get("ward")
 
-        # 3) Structure-aware + LLM chunking (gọi LLM → thread; bọc span Phoenix bên trong).
+        # 3) LLM chunking trên block markdown (gọi LLM → thread; bọc span Phoenix bên trong).
         chunk_nodes = await asyncio.to_thread(
-            chunker.build_nodes, pages, document_id, filename, doc_meta
+            md_chunker.build_nodes, pages, document_id, filename, doc_meta
         )
         if not chunk_nodes:
-            raise ValueError("PDF không tạo được chunk nào.")
+            raise ValueError("Tài liệu không tạo được chunk nào.")
 
         # 4) Embed + ghi Weaviate (mạng → thread).
-        await asyncio.to_thread(
-            vector_store.add_nodes, [cn.node for cn in chunk_nodes]
-        )
+        await asyncio.to_thread(vector_store.add_nodes, [cn.node for cn in chunk_nodes])
 
         # 5) Lưu chunk + metadata + cập nhật trạng thái.
         async with AsyncSessionLocal() as db:
@@ -158,6 +170,8 @@ async def ingest_document(document_id: int) -> None:
                     chunk_type=cn.chunk_type,
                     has_table=cn.has_table,
                     page_number=cn.page_number,
+                    # Lưới bảng thô (chỉ chunk bảng) — bọc dict để dễ mở rộng schema sau này.
+                    table_data={"grid": cn.table_data} if cn.table_data else None,
                 )
                 for i, cn in enumerate(chunk_nodes)
             ]
@@ -168,6 +182,8 @@ async def ingest_document(document_id: int) -> None:
             document.doc_type = doc_meta.get("doc_type")
             document.issued_date = doc_meta.get("issued_date")
             document.issuing_body = doc_meta.get("issuing_body")
+            document.school_year = doc_meta.get("school_year")
+            document.ward = doc_meta.get("ward")
             document.error_message = None
             await db.commit()
         logger.info(

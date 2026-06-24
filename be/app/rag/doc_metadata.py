@@ -15,7 +15,7 @@ from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.llms.openai import OpenAI
 
 from app.core.config import settings
-from app.rag.extract import PageBlock
+from app.rag.parse import ParsedPage
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,14 @@ def _get_llm() -> OpenAI:
     return _llm
 
 
-def _header_text(pages: list[PageBlock], max_pages: int = 2) -> str:
-    return "\n".join(p.text for p in pages[:max_pages]).strip()
+def _strip_md_markers(text: str) -> str:
+    """Bỏ marker markdown đầu dòng (``#``/``*``) để regex letterhead/loại văn bản khớp như text thuần."""
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)  # ATX heading
+    return text.replace("**", "").replace("__", "")
+
+
+def _header_text(pages: list[ParsedPage], max_pages: int = 2) -> str:
+    return _strip_md_markers("\n".join(p.md for p in pages[:max_pages])).strip()
 
 
 def _regex_extract(header: str) -> dict:
@@ -93,7 +99,7 @@ def _llm_extract(header: str) -> dict:
     return data
 
 
-def extract_doc_metadata(pages: list[PageBlock], filename: str | None = None) -> dict:
+def extract_doc_metadata(pages: list[ParsedPage], filename: str | None = None) -> dict:
     """Trả {doc_type, issued_date, issuing_body, doc_name}. Regex trước, LLM bù khi thiếu.
 
     Không bao giờ raise: lỗi LLM → giữ kết quả regex. ``doc_name`` fallback về ``filename``."""

@@ -1,34 +1,50 @@
 [
   {
-    "question": "Trường nào tuyển sinh vào lớp 1 trên địa bàn đặc khu Côn Đảo năm học 2026-2027?",
-    "ground_truth": "Trường Tiểu học Cao Văn Ngọc huy động 100% trẻ 6 tuổi và trẻ chưa hoàn thành chương trình lớp 1 đang cư trú trên địa bàn đặc khu vào lớp 1."
+    "question": "Trường tiểu học nào huy động trẻ vào lớp 1 trên địa bàn đặc khu Côn Đảo năm học 2026-2027?",
+    "ground_truth": "Trường Tiểu học Cao Văn Ngọc huy động 100% trẻ 6 tuổi và trẻ chưa hoàn thành chương trình lớp 1 đang cư trú trên địa bàn đặc khu Côn Đảo vào lớp 1."
   },
   {
-    "question": "Trường nào tuyển sinh vào lớp 6 ở đặc khu Côn Đảo?",
-    "ground_truth": "Trường THCS Lê Hồng Phong huy động 100% học sinh trên địa bàn đặc khu đã hoàn thành chương trình tiểu học vào học lớp 6."
+    "question": "Trường nào tuyển sinh vào lớp 6 ở đặc khu Côn Đảo năm học 2026-2027?",
+    "ground_truth": "Trường THCS Lê Hồng Phong huy động 100% học sinh trên địa bàn đặc khu Côn Đảo đã hoàn thành chương trình tiểu học vào học lớp 6."
+  },
+  {
+    "question": "Ở đặc khu Côn Đảo, Trường Mầm non Tuổi thơ tiếp nhận trẻ ở những khu dân cư nào?",
+    "ground_truth": "Trường Mầm non Tuổi thơ tiếp nhận trẻ trên địa bàn khu dân cư số 1, khu dân cư số 3 và khu dân cư số 7."
+  },
+  {
+    "question": "Bậc mầm non ở đặc khu Côn Đảo huy động bao nhiêu phần trăm trẻ 5 tuổi ra lớp năm học 2026-2027?",
+    "ground_truth": "Các cơ sở giáo dục mầm non trên địa bàn đặc khu Côn Đảo huy động 100% trẻ 5 tuổi đang cư trú trên địa bàn đến trường, trên 98% trẻ từ 3 đến 5 tuổi và trên 78% trẻ từ 3 đến 36 tháng tuổi."
+  },
+  {
+    "question": "Ở phường Bình Thạnh, dự kiến có bao nhiêu học sinh đăng ký vào lớp 1 năm học 2026-2027?",
+    "ground_truth": "Dự kiến có 1.159 học sinh đăng ký vào lớp 1 tại địa bàn phường Bình Thạnh."
+  },
+  {
+    "question": "Dự kiến bao nhiêu học sinh đăng ký vào lớp 6 ở phường Bình Thạnh năm học 2026-2027?",
+    "ground_truth": "Dự kiến có 1.342 học sinh đăng ký học lớp 6 tại địa bàn phường Bình Thạnh."
+  },
+  {
+    "question": "Nhu cầu tuyển sinh vào các trường mầm non ở phường Bình Thạnh năm học 2026-2027 là bao nhiêu trẻ?",
+    "ground_truth": "Nhu cầu tuyển sinh vào các trường mầm non ở phường Bình Thạnh là 1.344 trẻ, bao gồm 593 trẻ trường công lập và 751 trẻ các cơ sở giáo dục ngoài công lập."
+  },
+  {
+    "question": "Phụ huynh đăng ký và nộp hồ sơ tuyển sinh đầu cấp trực tuyến ở địa chỉ nào?",
+    "ground_truth": "Phụ huynh đăng ký và nộp hồ sơ trực tuyến trên trang tuyển sinh đầu cấp của Thành phố tại địa chỉ https://tuyensinhdaucap.hcm.edu.vn."
   },
   {
     "question": "Thông tin nơi ở hiện tại của học sinh được xác định thông qua đâu?",
     "ground_truth": "Thông tin nơi ở hiện tại của học sinh được xác định thông qua ứng dụng định danh điện tử (VNeID) của cha, mẹ hoặc người giám hộ hợp pháp."
   },
   {
-    "question": "Phụ huynh đăng ký và nộp hồ sơ tuyển sinh trực tuyến ở địa chỉ nào?",
-    "ground_truth": "Phụ huynh đăng ký và nộp hồ sơ trực tuyến trên trang tuyển sinh của Thành phố tại địa chỉ https://tuyensinhdaucap.hcm.edu.vn."
-  },
-  {
-    "question": "Kế hoạch huy động trẻ ra lớp và tuyển sinh này áp dụng cho năm học nào?",
-    "ground_truth": "Kế hoạch áp dụng cho năm học 2026 - 2027."
-  },
-  {
-    "question": "Trường Mầm non Tuổi thơ tiếp nhận trẻ ở những khu dân cư nào?",
-    "ground_truth": "Trường Mầm non Tuổi thơ tiếp nhận trẻ trên địa bàn khu dân cư số 1, khu dân cư số 3 và khu dân cư số 7."
-  },
-  {
     "question": "Riêng tuyển sinh vào lớp 6, thông tin học sinh phải có tại địa chỉ trang nào?",
     "ground_truth": "Tuyển sinh vào lớp 6 phải có thông tin tại địa chỉ https://csdl.hcm.edu.vn."
   },
   {
-    "question": "Mức học phí lớp 1 năm học 2026-2027 ở đặc khu Côn Đảo là bao nhiêu?",
-    "ground_truth": "Tài liệu không cung cấp thông tin về mức học phí lớp 1; hệ thống nên trả lời là chưa có thông tin và đề nghị phụ huynh liên hệ nhà trường."
+    "question": "Kế hoạch huy động trẻ ra lớp và tuyển sinh đầu cấp này áp dụng cho năm học nào?",
+    "ground_truth": "Kế hoạch áp dụng cho năm học 2026 - 2027."
+  },
+  {
+    "question": "Mức học phí lớp 1 năm học 2026-2027 ở phường Bình Thạnh là bao nhiêu?",
+    "ground_truth": "Tài liệu không cung cấp thông tin về mức học phí lớp 1; hệ thống nên trả lời là chưa có thông tin và đề nghị phụ huynh liên hệ nhà trường hoặc cơ quan có thẩm quyền."
   }
 ]

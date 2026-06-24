@@ -5,7 +5,11 @@ retriever / rerank / prompt). Theo CLAUDE.md: thay đổi RAG phải có số RA
 
 ## Cấu trúc
 
-- `dataset.json` — bộ câu hỏi tuyển sinh + `ground_truth` (căn cứ trên corpus thật).
+- `dataset.json` — bộ câu hỏi tuyển sinh + `ground_truth` (căn cứ trên corpus thật). **12 câu** căn
+  cứ 2 tài liệu **đặc khu Côn Đảo** + **phường Bình Thạnh** (năm học 2026-2027): 4 câu theo Côn Đảo,
+  4 câu theo Bình Thạnh (gồm 1 câu từ chối học phí), 4 câu chung (quy trình/đăng ký/năm học).
+  8/12 câu nêu rõ phường + năm → **kích hoạt metadata filter** (đánh giá đúng Nhóm B). ⚠️ **Bắt buộc
+  ingest 2 doc này** (lý tưởng cả corpus) vào Weaviate trước khi chạy, nếu không retrieval sẽ rỗng.
 - `run_pipeline_dump.py` — chạy pipeline THẬT (hybrid → rerank → LLM), dump `{question, answer,
   contexts, ground_truth}` ra `results/`. Chạy ở **venv chính** (`be/.venv`, Python 3.14).
 - `run_ragas.py` — tính 4 metric RAGAS từ file dump. Chạy ở **venv ragas riêng** (Python 3.11).
@@ -36,14 +40,26 @@ export OPENAI_API_KEY="$(grep '^OPENAI_API_KEY=' .env | cut -d= -f2- | tr -d '\r
 PYTHONUTF8=1 ./_ragas_venv/Scripts/python.exe eval/run_ragas.py eval/results/viranker.json
 ```
 
-## Kết quả gần nhất (2026-06-20, 8 câu hỏi, top_k=30 → RRF → rerank top_n=6 → gpt-4o-mini)
+## Kết quả (2026-06-24, 12 câu, corpus Côn Đảo + Bình Thạnh đã re-ingest qua pipeline A+B)
 
-| Metric | ViRanker | bge-reranker-v2-m3 |
-|---|---|---|
-| faithfulness | 0.9375 | 0.9375 |
-| answer_relevancy | 0.4201 | 0.4757 |
-| context_precision (w/ ref) | 0.7781 | 0.8283 |
-| context_recall | 0.8125 | 0.8750 |
+Cohere `rerank-multilingual-v3.0` · top_n=6 · gpt-4o-mini. So **filter TẮT vs BẬT** (cùng corpus đã
+clean → cô lập Nhóm B). Dump: `results/dump_nofilter.json`, `results/dump_filter.json`.
 
-`answer_relevancy` thấp do 2 câu hỏi từ chối đúng (ngoài corpus) bị RAGAS chấm 0. Trên tập nhỏ
-này bge nhỉnh hơn (chủ yếu câu lớp 1). Đổi model = 1 dòng `settings.rerank_model`.
+| Metric | filter TẮT | filter BẬT (A+B) | Δ |
+|---|---|---|---|
+| faithfulness | 0.7500 | **0.8333** | **+0.083** |
+| answer_relevancy | 0.4795 | 0.4632 | −0.016 |
+| context_precision (w/ ref) | 0.8653 | 0.8217 | −0.044 |
+| context_recall | 0.9167 | 0.8750 | −0.042 |
+
+**Diễn giải:** filter nâng **faithfulness** (LLM chỉ thấy ngữ cảnh đúng phường → ít trộn nhầm dữ kiện
+phường khác); precision/recall lệch nhẹ trong biên độ nhiễu (12 câu, ±0.04 ≈ 0.5 câu). Trên corpus
+NHỎ (2 phường) giá trị filter bị **muted** vì retrieval đã gần đúng dù không lọc; lợi ích thật sự
+(chặn nhầm phường) chỉ rõ trên **corpus đầy đủ 158 phường**. `answer_relevancy` thấp do 2 câu từ chối
+đúng (Q12 học phí, Q2 lớp 6) bị RAGAS chấm ~0.
+
+**Chưa cô lập Nhóm A (clean):** cả hai run đều dùng text ĐÃ clean. Muốn đo riêng clean → re-ingest với
+`CLEAN_ENABLED=false` rồi dump+ragas (clean chỉ gỡ ~43 ký tự số trang/18 trang nên tác động dự kiến nhỏ).
+
+### Cũ (2026-06-20, corpus An Khánh/An Đông — KHÔNG so trực tiếp được)
+faithfulness 0.9375 · answer_relevancy 0.42–0.48 · context_precision 0.78–0.83 · context_recall 0.81–0.88.

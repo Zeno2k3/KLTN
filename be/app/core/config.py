@@ -59,63 +59,39 @@ class Settings(BaseSettings):
     # nên chấm điểm property này (tránh nhiễu từ "_node_content").
     weaviate_text_key: str = "text"
 
-    # Chunking — structure-aware + LLM chunker (xem app/rag/chunker.py).
-    # LƯU Ý NGỮ NGHĨA: ``chunk_size`` KHÔNG còn là cap cứng. Khoản là đơn vị nguyên tử
-    # (1 Khoản = 1 chunk, không bao giờ cắt giữa Khoản dù dài). ``chunk_size`` chỉ là NGƯỠNG MỀM
-    # để GỘP nhiều Khoản nhỏ liền kề vào cùng một chunk; một Khoản đơn vượt ngưỡng vẫn giữ nguyên.
+    # LlamaParse (LlamaCloud) — parse PDF/DOCX → markdown sạch theo trang; server lo OCR/bảng/font/dấu.
+    # Gọi REST API trực tiếp bằng httpx (SDK llama-cloud dùng pydantic.v1 → vỡ trên Python 3.14).
+    llama_cloud_api_key: str = ""
+    llamaparse_base_url: str = "https://api.cloud.llamaindex.ai/api/v1/parsing"
+    llamaparse_language: str = "vi"  # ngôn ngữ OCR/parse
+    llamaparse_poll_interval: float = 3.0  # giây giữa các lần poll trạng thái job
+    llamaparse_max_wait_seconds: float = 180.0  # trần chờ job hoàn tất (vượt → ingest failed)
+    llamaparse_http_timeout: float = 120.0  # timeout mỗi request httpx (upload/poll/result)
+
+    # Chunking — LLM chunker trên markdown LlamaParse (xem app/rag/md_chunker.py).
+    # Block = item LlamaParse (heading/text/table). LLM GỘP block liền kề + sinh context; code ghép
+    # nội dung VERBATIM. ``chunk_size`` là NGƯỠNG MỀM gộp block nhỏ ở fallback; ``chunk_overlap`` fallback.
     chunk_size: int = 512
     chunk_overlap: int = 64
-    # LLM chunker: model RIÊNG cho bước chia chunk (rỗng → fallback openai_chat_model).
-    # KHÔNG dùng singleton LLM chung (mỗi bước RAG giữ LLM/model riêng).
+    # LLM chunker: model RIÊNG (rỗng → fallback openai_chat_model). KHÔNG dùng singleton LLM chung.
     chunker_model: str = ""
-    chunk_llm_enabled: bool = (
-        True  # tắt → chỉ dùng rule-based (xác định, không gọi LLM)
-    )
-    # Section <= ngưỡng này → emit thẳng 1 chunk, KHÔNG gọi LLM chia (tiết kiệm chi phí token).
+    chunk_llm_enabled: bool = True  # tắt → fallback gộp block theo kích thước (xác định, không gọi LLM)
+    # Region (batch block) <= ngưỡng token này → emit fallback, KHÔNG gọi LLM (tiết kiệm token).
     chunk_llm_min_tokens: int = 400
-
-    # OCR — tầng fallback cho PDF scan ảnh (không có lớp text). Render trang → ảnh → OpenAI Vision
-    # (qua LlamaIndex ImageBlock → Phoenix auto-trace). Chỉ chạy cho trang bị đánh dấu cần OCR.
-    ocr_enabled: bool = True
-    ocr_provider: str = (
-        "openai"  # "openai" (vision-LLM) | "tesseract" (chưa triển khai)
-    )
-    ocr_model: str = ""  # rỗng → fallback openai_chat_model (gpt-4o-mini có vision)
-    # Trang có text-layer < ngưỡng ký tự (và không có bảng thật) → coi là trang scan cần OCR.
-    ocr_min_chars: int = 50
-    ocr_dpi: int = 200  # DPI render trang → ảnh (cân chất lượng OCR vs token ảnh)
-    ocr_max_pages: int = (
-        50  # số trang scan/tài liệu vượt ngưỡng → ingest FAILED (chặn cost token)
-    )
-    ocr_timeout_seconds: float = (
-        60.0  # timeout mỗi call vision (tránh treo cả lượt OCR)
-    )
-
-    # Phát hiện text native-PDF bị mojibake (font VNI/TCVN3 hoặc subset-font thiếu ToUnicode CMap →
-    # pdfminer.six trả codepoint sai). Trang garbled được thử lại bằng PDFium rồi mới fallback OCR.
-    garbled_detect_enabled: bool = True  # cờ tắt khẩn cấp (rollback không cần deploy)
-    garbled_min_chars: int = (
-        200  # gate độ dài: dưới ngưỡng KHÔNG kết luận garbled (chống oan)
-    )
-    garbled_min_words: int = 20  # tối thiểu số từ mới xét tín hiệu stopword
-    garbled_stopword_ratio: float = (
-        0.03  # tỉ lệ trúng stopword tiếng Việt < ngưỡng → nghi garbled
-    )
-    garbled_foreign_ratio: float = (
-        0.20  # tỉ lệ ký tự "lạ" (symbol) > ngưỡng → nghi garbled
-    )
-    # Ký tự RÁC chắc chắn (PUA / control / replacement / unassigned — subset-font thiếu ToUnicode hay
-    # sinh ra) — ngưỡng thấp vì chỉ cần vài % là đủ kết luận font hỏng.
-    garbled_suspicious_ratio: float = 0.02
-    # Mật độ ký tự CÓ DẤU tiếng Việt tối thiểu: font hỏng kiểu PHỔ BIẾN NHẤT map glyph có dấu về chữ
-    # ASCII trần ("CỘNG HÒA"→"CONG HOA") → text là tiếng Việt nhưng ~0% ký tự dấu. Dưới ngưỡng + vẫn
-    # nhận ra là tiếng Việt (đủ stopword) → diacritic bị strip → route OCR để lấy lại dấu.
-    garbled_diacritic_ratio: float = 0.01
+    # Trần token mỗi batch block gửi LLM (chặn prompt quá to với tài liệu dài).
+    chunk_llm_region_max_tokens: int = 2500
 
     # Retrieval hybrid (BM25 keyword + vector semantic, hợp nhất RRF)
     # alpha=1.0 thuần vector, 0.0 thuần keyword; 0.6 ⇒ ưu tiên 60% semantic / 40% keyword.
     hybrid_alpha: float = 0.6
     retrieval_top_k: int = 30  # số ứng viên sau hybrid+RRF, trước khi rerank
+
+    # Lọc metadata khi truy xuất (app/rag/query_filters.py). Trích năm học + phường/xã TỪ CÂU HỎI
+    # rồi dựng MetadataFilters (EQ, AND) áp cho cả nhánh BM25 lẫn vector. Chỉ lọc khi câu hỏi nêu rõ.
+    query_filter_enabled: bool = True
+    # Fallback an toàn: filter ra 0 kết quả → retry KHÔNG filter (tránh "biến mất" tài liệu do
+    # over-filter hoặc object Weaviate cũ thiếu property). Đặt False để thấy đúng kết quả-rỗng.
+    filter_fallback_on_empty: bool = True
 
     # Tiền xử lý truy vấn (chạy TRƯỚC retrieve, trong cùng span rag.answer).
     # - Router: phân loại câu hỏi "rag" (cần tài liệu) vs "direct" (chào hỏi/ngoài phạm vi → LLM

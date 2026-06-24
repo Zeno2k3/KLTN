@@ -63,11 +63,13 @@ async def serve_document_file(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> FileResponse:
-    """Phục vụ file PDF gốc để xem (inline) hoặc tải xuống (attachment khi ?download=1)."""
+    """Phục vụ file gốc (PDF/DOCX) để xem (inline) hoặc tải xuống (attachment khi ?download=1)."""
     path, filename = await document_service.get_document_file(db, document_id)
+    # media_type theo đuôi file (DOCX trình duyệt sẽ tải về thay vì xem inline — chấp nhận được).
+    media_type = document_service.media_type_for(path)
     return FileResponse(
         path,
-        media_type="application/pdf",
+        media_type=media_type,
         filename=filename,
         content_disposition_type="attachment" if download else "inline",
     )

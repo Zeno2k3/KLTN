@@ -191,6 +191,83 @@ def test_answer_question_rag_route_retrieves_with_rewritten_query(monkeypatch):
     assert result.sources[0]["filename"] == "a.pdf"
 
 
+def _stub_llm(monkeypatch):
+    monkeypatch.setattr(
+        query_engine,
+        "_get_llm",
+        lambda: SimpleNamespace(
+            chat=lambda messages: SimpleNamespace(
+                message=SimpleNamespace(content="trả lời [1].")
+            )
+        ),
+    )
+
+
+def test_answer_question_builds_and_passes_metadata_filter(monkeypatch):
+    # Nhóm B: câu hỏi nêu phường + năm học → answer_question dựng filter và truyền vào retrieve.
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_filter_enabled", True)
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", False)
+    seen: dict = {}
+
+    def _fake_retrieve(query, filters=None):
+        seen["filters"] = filters
+        return [_node("nội dung", 1, "a.pdf", "u1", 1.0)]
+
+    monkeypatch.setattr(query_engine, "retrieve_and_rerank", _fake_retrieve)
+    _stub_llm(monkeypatch)
+
+    query_engine.answer_question(
+        "hồ sơ tuyển sinh phường Bình Thạnh năm học 2026-2027 cần gì?"
+    )
+    assert seen["filters"] is not None  # filter được dựng + truyền vào retrieve
+    keys = {f.key: f.value for f in seen["filters"].filters}
+    assert keys == {"ward": "Bình Thạnh", "school_year": "2026-2027"}
+
+
+def test_answer_question_filter_fallback_on_empty(monkeypatch):
+    # Nhóm B: filter ra rỗng → retry KHÔNG filter (tránh "biến mất" tài liệu).
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_filter_enabled", True)
+    monkeypatch.setattr(query_engine.settings, "filter_fallback_on_empty", True)
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", False)
+    calls: list = []
+
+    def _fake_retrieve(query, filters=None):
+        calls.append(filters)
+        if filters is not None:
+            return []  # có filter → rỗng
+        return [_node("nội dung", 1, "a.pdf", "u1", 1.0)]  # không filter → có kết quả
+
+    monkeypatch.setattr(query_engine, "retrieve_and_rerank", _fake_retrieve)
+    _stub_llm(monkeypatch)
+
+    result = query_engine.answer_question("phường Bình Thạnh năm học 2026-2027")
+    assert len(calls) == 2  # lần 1 có filter (rỗng), lần 2 fallback không filter
+    assert calls[0] is not None and calls[1] is None
+    assert result.sources  # fallback cho ra kết quả
+
+
+def test_answer_question_no_filter_when_disabled(monkeypatch):
+    monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "query_filter_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", False)
+    seen: dict = {}
+
+    def _fake_retrieve(query, filters=None):
+        seen["filters"] = filters
+        return [_node("nội dung", 1, "a.pdf", "u1", 1.0)]
+
+    monkeypatch.setattr(query_engine, "retrieve_and_rerank", _fake_retrieve)
+    _stub_llm(monkeypatch)
+
+    query_engine.answer_question("phường Bình Thạnh năm học 2026-2027")
+    assert seen["filters"] is None  # tắt → không lọc
+
+
 # --- Hậu kiểm trích nguồn (citation verifier) trong pipeline ---
 
 

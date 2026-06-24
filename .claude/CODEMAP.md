@@ -15,7 +15,7 @@
   - JWT + băm mật khẩu (bcrypt): [be/app/core/security.py](be/app/core/security.py)
   - Redis async + blacklist JWT khi logout: [be/app/core/redis.py](be/app/core/redis.py)
   - **Tracing Phoenix (OTEL):** [be/app/core/observability.py](be/app/core/observability.py) — `init_tracing()` guard `phoenix_enabled`, tự ghép `/v1/traces`.
-- **RAG ingest:** [be/app/rag/](be/app/rag/) — `vector_store.py` (Weaviate Cloud + OpenAIEmbedding; `add_nodes/delete_objects/retrieve`), `ingest.py` (pypdf + SentenceSplitter + tiktoken). Mọi thay đổi → bắt buộc skill `rag-eval`.
+- **RAG ingest:** [be/app/rag/](be/app/rag/) — `parse.py` (LlamaParse cloud qua REST httpx: PDF/DOCX→markdown theo trang + `items` heading/text/table), `md_chunker.py` (LLM gộp block markdown→ChunkNode, bảng→chunk riêng, Contextual Retrieval, ref_doc_id uuid5), `doc_metadata.py`/`title_metadata.py` (metadata văn bản + năm học/phường-xã từ tên file), `vector_store.py` (Weaviate + OpenAIEmbedding; `add_nodes/delete_objects/retrieve`), `ingest.py` (chỉ `count_tokens`). Mọi thay đổi → bắt buộc skill `rag-eval`.
 - Nghiệp vụ: [be/app/services/auth_service.py](be/app/services/auth_service.py) (auth), [be/app/services/document_service.py](be/app/services/document_service.py) (upload + ingest NỀN + delete; `asyncio.to_thread`, commit ngay để ingest nền thấy row).
 - Truy cập dữ liệu: [be/app/repositories/](be/app/repositories/) (`user_repository.py`, `role_repository.py`, `document_repository.py`).
 - Model (SQLModel/SQLAlchemy): [be/app/models/](be/app/models/) — `user`, `role`, `conversation`, `message`, `document` (+`DocumentChunk`), `evaluation`, `feedback`, `base`.
