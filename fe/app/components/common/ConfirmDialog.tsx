@@ -73,8 +73,8 @@ export default function ConfirmDialog({
         <h2 style={{ margin: "0 0 8px", fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 19, color: "var(--text-strong)" }}>{title}</h2>
         <div style={{ margin: 0, fontSize: 14, color: "var(--text-muted)", lineHeight: 1.55 }}>{message}</div>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 28 }}>
-          <Button variant='secondary' onClick={onCancel} size="sm">{cancelLabel}</Button>
-          <Button variant='danger' onClick={onConfirm} size="sm">{confirmLabel}</Button>
+          <Button variant='primary' onClick={onCancel} size="sm">{cancelLabel}</Button>
+          <Button variant={confirmVariant} onClick={onConfirm} size="sm">{confirmLabel}</Button>
         </div>
       </div>
     </div>
