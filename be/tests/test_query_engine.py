@@ -16,9 +16,10 @@ def _node(text, doc_id, filename, uuid, score):
 
 
 def test_answer_question_reranks_builds_sources_and_calls_llm(monkeypatch):
-    # Tách router/rewrite ra khỏi test này (tập trung kiểm retrieve→rerank→synthesize).
+    # Tách router/rewrite/verifier ra khỏi test này (tập trung kiểm retrieve→rerank→synthesize).
     monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
     monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", False)
     candidates = [
         _node(f"đoạn nội dung {i}", 1, "quy-che.pdf", f"uuid-{i}", 0.5 + i)
         for i in range(10)
@@ -96,6 +97,7 @@ def test_answer_question_short_circuits_without_context(monkeypatch):
 def test_answer_question_excludes_metadata_from_snippet(monkeypatch):
     monkeypatch.setattr(query_engine.settings, "query_router_enabled", False)
     monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", False)
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", False)
     # snippet/ngữ cảnh dùng text THUẦN, không lẫn "document_id: ..." vào câu trả lời.
     node = _node("Nội dung thuần tuý", 7, "a.pdf", "uuid-x", 1.0)
     monkeypatch.setattr(query_engine, "hybrid_retrieve", lambda q, k, f: [node])
@@ -154,6 +156,7 @@ def test_answer_question_rag_route_retrieves_with_rewritten_query(monkeypatch):
     # Router='rag' + có lịch sử → retrieve nhận CÂU ĐÃ VIẾT LẠI (không phải câu follow-up gốc).
     monkeypatch.setattr(query_engine.settings, "query_router_enabled", True)
     monkeypatch.setattr(query_engine.settings, "query_rewrite_enabled", True)
+    monkeypatch.setattr(query_engine.settings, "citation_verify_enabled", False)
     monkeypatch.setattr(query_engine, "route_query", lambda q, h: "rag")
     monkeypatch.setattr(
         query_engine,

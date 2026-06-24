@@ -15,6 +15,7 @@ build/
 venv/
 env/
 _ragas_venv/
+_deploy_check_venv/
 
 # Environment Variables
 .env

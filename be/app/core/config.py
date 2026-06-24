@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -174,6 +175,22 @@ class Settings(BaseSettings):
     phoenix_collector_endpoint: str = ""
     phoenix_api_key: str = ""
     phoenix_project_name: str = "kltn-rag"
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def _force_asyncpg_driver(cls, v: str) -> str:
+        """Ép driver async cho Postgres URL do host cấp.
+
+        Render/Railway/Heroku cấp ``DATABASE_URL`` dạng ``postgres://`` hoặc
+        ``postgresql://`` (driver đồng bộ). App + Alembic chạy async toàn bộ nên cần
+        ``postgresql+asyncpg://``. URL đã ghi rõ ``+asyncpg`` (hoặc dialect khác) giữ
+        nguyên — chỉ vá khi thiếu driver.
+        """
+        if v.startswith("postgres://"):
+            v = "postgresql://" + v[len("postgres://") :]
+        if v.startswith("postgresql://"):
+            v = "postgresql+asyncpg://" + v[len("postgresql://") :]
+        return v
 
 
 settings = Settings()

@@ -1,5 +1,47 @@
 # PROGRESS
 
+## 2026-06-24 — Cấu hình deploy: BE → Render/Railway (Docker), FE → Vercel
+
+**Vấn đề:** Deploy `be/` lên Vercel lỗi `ModuleNotFoundError: No module named 'setuptools.backends'`.
+Nguyên nhân gốc: [be/pyproject.toml](be/pyproject.toml) khai báo `build-backend =
+"setuptools.backends.legacy:build"` — module KHÔNG tồn tại (đúng phải là `setuptools.build_meta`).
+Nhưng sâu xa hơn: BE phụ thuộc torch/transformers/… (image >1GB) + cần pool DB/Redis + ổ đĩa +
+timeout dài → **về cơ bản không hợp serverless Vercel** (giới hạn 250MB). → Tách: FE lên Vercel, BE
+lên nền tảng container.
+
+**Giải pháp:**
+- Sửa `build-backend` → `setuptools.build_meta` ([be/pyproject.toml](be/pyproject.toml)).
+- [be/app/core/config.py](be/app/core/config.py): thêm `field_validator` ép `postgres://` /
+  `postgresql://` → `postgresql+asyncpg://` (Render/Railway cấp URL driver đồng bộ; app+Alembic async).
+  Kèm 4 test [be/tests/test_config.py](be/tests/test_config.py).
+- [be/requirements-deploy.txt](be/requirements-deploy.txt): subset 152 gói, BỎ reranker-local
+  (torch/transformers/sentence-transformers/accelerate/peft/scikit-learn/scipy…), eval RAGAS
+  (datasets/ir_datasets…), dev/test (pytest/ruff/coverage). An toàn vì các lib này import LƯỜI
+  (chỉ khi `RERANK_PROVIDER=sentence-transformers`; prod dùng Cohere). Image 1.17GB thay vì ~3.5GB.
+- [be/Dockerfile](be/Dockerfile) multi-stage (builder có build-essential, runtime gọn),
+  [be/.dockerignore](be/.dockerignore), [render.yaml](render.yaml) blueprint, [DEPLOY.md](DEPLOY.md).
+- Cookie xuyên domain (FE↔BE khác domain): cần `COOKIE_SECURE=true` + `COOKIE_SAMESITE=none` +
+  `ALLOWED_ORIGINS=["https://<fe>.vercel.app"]`. FE đặt `NEXT_PUBLIC_API_URL=<be-url>` (tự ghép /api/v1).
+
+**Kiểm chứng (đã chạy thật):** `ruff check .` sạch · `pytest` 136 passed · venv sạch cài
+requirements-deploy.txt import `app.main` OK · `docker build` thành công (mọi gói có wheel cp314
+linux) · container `--network none`: import + `SentenceSplitter` offline + cohere/weaviate/asyncpg/redis
+OK · boot uvicorn rồi curl: `GET /`→200 `{"name":"KLTN API",...}`, `GET /api/v1/health`→200
+`{"status":"ok",...}` · Redis vắng → suy giảm mượt (warn, không sập).
+
+**Sửa flaky test (phát hiện khi chạy lại gate):** 3 test cũ trong
+[be/tests/test_query_engine.py](be/tests/test_query_engine.py) (`...reranks_builds_sources...`,
+`...excludes_metadata_from_snippet`, `...rag_route_retrieves_with_rewritten_query`) đi qua
+`synthesize`→verifier nhưng KHÔNG pin `citation_verify_enabled` và KHÔNG mock `verify_answer`. Do
+`.env` đặt `CITATION_VERIFY_ENABLED=true`, chúng gọi LLM verifier THẬT → `sources` bị lọc theo
+`cited_indices` LLM trả về (non-deterministic) → `IndexError` lúc đỏ lúc xanh. Sửa: pin
+`citation_verify_enabled=False` cho 3 test này (chúng kiểm retrieve→rerank→sources, không phải
+verifier — verifier đã có test riêng 219/243/259). Khôi phục cam kết "không gọi mạng" ở docstring;
+suite từ ~15s còn ~5.5s. KHÔNG đụng mã sản phẩm `query_engine.py`.
+
+**Lưu ý:** Không chạm logic RAG (chunking/embedding/retriever/prompt) → không cần rag-eval. Disk lưu
+PDF trên Render cần plan ≥ starter; plan free thì PDF tải lên là tạm.
+
 ## 2026-06-24 — Sửa dialog xác nhận xóa cuộc trò chuyện (FE)
 
 **Vấn đề:** Dialog "Xóa cuộc trò chuyện" đặt sai trọng tâm thị giác — nút phá hủy **"Xóa"** đỏ

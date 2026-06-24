@@ -1,0 +1,88 @@
+# Render Blueprint — deploy backend RAG (be/) dạng Docker.
+# Áp dụng: Render Dashboard → New → Blueprint → trỏ vào repo này.
+# Spec: https://render.com/docs/blueprint-spec
+#
+# FE (fe/) KHÔNG deploy ở đây — FE lên Vercel (xem DEPLOY.md).
+
+databases:
+  - name: kltn-db
+    plan: basic-256mb # hoặc "free" (DB dùng thử 90 ngày). Render Postgres mặc định UTF8 → OK.
+    region: singapore # gần VN nhất
+    databaseName: kltn_db
+    postgresMajorVersion: "16"
+
+services:
+  # --- Redis (Render gọi là "Key Value"). Tài khoản/CLI cũ có thể là type: redis ---
+  - type: keyvalue
+    name: kltn-redis
+    plan: free # Key Value free 25MB, đủ cho cache
+    region: singapore
+    ipAllowList: [] # rỗng = chỉ truy cập nội bộ Render (an toàn)
+    maxmemoryPolicy: allkeys-lru
+
+  # --- Backend FastAPI + RAG ---
+  - type: web
+    name: kltn-backend
+    runtime: docker
+    plan: starter # cần >= starter để gắn disk (plan free KHÔNG hỗ trợ disk)
+    region: singapore
+    rootDir: be # build context = thư mục be/
+    dockerfilePath: ./Dockerfile # tương đối so với rootDir
+    healthCheckPath: /
+    autoDeploy: true
+
+    # PDF tải lên cần lưu bền qua các lần deploy. Bỏ block này nếu dùng plan free
+    # (khi đó storage/ là tạm, mất sau mỗi deploy/restart).
+    disk:
+      name: uploads
+      mountPath: /app/storage
+      sizeGB: 1
+
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: UPLOAD_DIR
+        value: /app/storage/uploads
+
+      # Cookie xuyên domain (FE vercel.app ↔ BE onrender.com) → bắt buộc SameSite=None + Secure
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: none
+
+      # Tự nối từ DB/Redis khai báo ở trên (URL nội bộ; config.py tự ép +asyncpg cho DB)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kltn-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kltn-redis
+          property: connectionString
+
+      # SECRET_KEY ký JWT — để Render sinh ngẫu nhiên 1 lần
+      - key: SECRET_KEY
+        generateValue: true
+
+      # --- BÍ MẬT: sync:false → Render hỏi giá trị khi áp blueprint (KHÔNG commit vào repo) ---
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: WEAVIATE_URL
+        sync: false
+      - key: WEAVIATE_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      # JSON list các origin FE được phép gọi (CORS). VD: ["https://ten-app.vercel.app"]
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # Phoenix tracing (Phoenix Cloud). Để trống PHOENIX_ENABLED=false nếu chưa dùng.
+      - key: PHOENIX_COLLECTOR_ENDPOINT
+        sync: false
+      - key: PHOENIX_API_KEY
+        sync: false

@@ -1,0 +1,37 @@
+# Loại khỏi build context để image gọn & build nhanh, tránh lọt bí mật.
+
+# Virtual environments
+.venv/
+venv/
+env/
+_ragas_venv/
+_deploy_check_venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Bí mật & cấu hình local (đặt qua biến môi trường của nền tảng, KHÔNG bake vào image)
+.env
+*.env.local
+
+# Không cần lúc chạy production
+tests/
+eval/
+
+# Dữ liệu runtime (PDF tải lên) — sống trên persistent disk / volume, không bake vào image
+storage/
+
+# Khác
+.git/
+.gitignore
+*.log
+README.md
