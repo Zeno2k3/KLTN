@@ -144,6 +144,26 @@ def _fetch_pages(client: httpx.Client, job_id: str) -> list[ParsedPage]:
         )
     return pages
 
+# Kết quả trả về
+# {
+#   "pages": [
+#     {
+#       "page": 1,
+#       "md":   "# KẾ HOẠCH\n\n# Huy động trẻ ra lớp...\n\n...",   // ← markdown CẢ TRANG
+#       "text": "KẾ HOẠCH Huy động trẻ ra lớp...",                // text thuần (không markdown)
+#       "items": [                                                 // ← từng block ĐÃ PHÂN LOẠI
+#         { "type": "heading", "lvl": 1, "value": "KẾ HOẠCH", "md": "# KẾ HOẠCH" },
+#         { "type": "text",    "value": "Thực hiện Quyết định...", "md": "Thực hiện Quyết định..." },
+#         { "type": "table",   "rows": [["Ngày bắt đầu","Nội dung"],["22/4/2026","..."]],
+#                              "md": "| Ngày bắt đầu | Nội dung |\n| --- | --- |\n| 22/4/2026 | ... |" }
+#       ],
+#       "pageHeaderMarkdown": "ỦY BAN NHÂN DÂN\nPHƯỜNG BÌNH THẠNH\n...",
+#       "pageFooterMarkdown": ""
+#     }
+#   ],
+#   "job_metadata": { ... }
+# }
+
 
 def parse_document(path: str) -> list[ParsedPage]:
     """Parse 1 file PDF/DOCX → ``list[ParsedPage]`` (markdown + blocks theo trang) qua LlamaParse.
