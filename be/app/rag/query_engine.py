@@ -235,16 +235,26 @@ def retrieve_and_rerank(query_text: str, filters: Any = None) -> list[NodeWithSc
 
 
 def synthesize(
-    query_text: str, reranked: list[NodeWithScore]
+    query_text: str,
+    reranked: list[NodeWithScore],
+    feedback: str | None = None,
 ) -> tuple[str, list[dict], str]:
     """LLM soạn câu trả lời từ các chunk đã xếp hạng; trả (answer, sources trích dẫn, context).
 
     Trả thêm ``context`` (chuỗi ngữ cảnh đã đánh số [n]) để bước hậu kiểm trích nguồn nhìn ĐÚNG
-    ngữ cảnh đã đưa cho LLM, không phải ráp lại từ snippet[:500]."""
+    ngữ cảnh đã đưa cho LLM, không phải ráp lại từ snippet[:500].
+
+    ``feedback`` (tuỳ chọn): góp ý hiệu đính từ CriticAgent (đường đa tác tử) → thêm vào prompt để
+    LLM viết lại. Không truyền → hành vi y hệt trước (đường tuyến tính không đổi)."""
     context, sources = _build_context(reranked)
+    user_content = _user_prompt(context, query_text)
+    if feedback:
+        user_content += (
+            f"\n\nGÓP Ý HIỆU ĐÍNH (viết lại câu trả lời theo đúng góp ý này):\n{feedback}"
+        )
     messages = [
         ChatMessage(role=MessageRole.SYSTEM, content=_SYSTEM_PROMPT),
-        ChatMessage(role=MessageRole.USER, content=_user_prompt(context, query_text)),
+        ChatMessage(role=MessageRole.USER, content=user_content),
     ]
     response = _get_llm().chat(messages)
     return (response.message.content or "").strip(), sources, context

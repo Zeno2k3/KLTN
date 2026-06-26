@@ -1,5 +1,71 @@
 # PROGRESS
 
+## 2026-06-27 — Lớp điều phối ĐA TÁC TỬ (event-driven multi-agent) sau pipeline tuyến tính
+
+**Mục tiêu:** Nâng RAG mô-đun tuyến tính (`query_engine.answer_question`) lên hệ **đa tác tử** đúng
+nghĩa (cho KLTN): Planner phân rã câu hỏi → nhiều Retrieval agent chạy SONG SONG (fan-out) → Synthesis
+gộp đa nguồn (fan-in) → Critic phản biện + vòng viết lại (agent-to-agent). Dựng bằng
+`llama-index-workflows` (đã có, trước nay chưa dùng). Nguyên tắc: TÁI DÙNG code đã test
+(`route_query`/`retrieve_and_rerank`/`synthesize`/`citation_verifier`), workflow async chỉ điều phối.
+
+**Thêm/sửa:**
+- `app/core/config.py`: cờ `rag_multi_agent_enabled` (mặc định **False** — đường cũ không đổi) +
+  `planner_*`, `retrieval_grade_*`, `retrieval_max_rounds`, `critic_model`, `critic_max_revisions`.
+- `app/rag/agents/`: `events.py`, `planner.py`, `retrieval_agent.py` (tự-chấm + lặp), `synthesis.py`
+  (merge khử trùng node), `critic.py` (bọc `citation_verifier` + quyết accept/revise), `workflow.py`
+  (`RAGAgentWorkflow` + entry async `answer_question_agentic`).
+- `app/rag/query_engine.py`: `synthesize(..., feedback=None)` (backward-compat, cho vòng revise).
+- `app/services/chat_service.py`: rẽ nhánh theo cờ, GIỮ `wait_for` timeout → 503.
+- Test mới: `test_planner_agent`, `test_retrieval_agent`, `test_critic_agent`, `test_agent_workflow`.
+
+**Bằng chứng:** `ruff check .` sạch · `pytest -q` = **186 passed** (gồm 19 test mới; đường cũ không
+hồi quy). **Chạy THẬT** (OpenAI+Cohere+Weaviate) câu "Hồ sơ và độ tuổi tuyển sinh lớp 1?" →
+Planner tách **2 sub-query** → trả lời có trích dẫn [3][4][6] từ PDF Bến Cát/Bình Hưng Hòa, 28.5s,
+**trace_id `fb5279bfddda8bd8d52795ad9694937d`** (Phoenix Cloud, project kltn-rag).
+
+**CHƯA xong (theo DoD):** RAGAS A/B chưa chạy — `eval/dataset.json` (12 câu Côn Đảo/Bình Thạnh) **lệch
+corpus LIVE** (Bến Cát/Bình Hưng Hòa). Phải re-ingest đúng doc HOẶC viết lại dataset theo corpus rồi
+mới đo off-vs-on (xem memory `rag-eval-harness-state`).
+
+## 2026-06-26 — Sửa mất dấu tiếng Việt khi parse (ép vision parse_mode)
+
+**Triệu chứng:** Một số block trong chunk mất dấu phụ ("Độc lập"→"Đc lp", "Tăng cường"→"Tăng cưng",
+"Số:"→"S6"), xen kẽ block đủ dấu. KHÔNG phải lỗi chunking — text hỏng sẵn từ LlamaParse trước khi vào
+LLM chunker (chunker ghép verbatim nên bê nguyên lỗi).
+
+**Nguyên nhân:** PDF "lai" — phần dùng font có bảng ToUnicode lỗi → text-layer nhúng bị strip dấu phụ;
+phần font tốt thì đủ dấu. LlamaParse mặc định (`parse_page_with_llm`) **ưu tiên đọc text-layer**, OCR chỉ
+áp cho ảnh nhúng → kế thừa nguyên lỗi font ở các đoạn đó.
+
+**Sửa:** Thêm `llamaparse_parse_mode` (config, mặc định **`parse_page_with_lvm`**) — render mỗi trang →
+Large Vision Model đọc, BỎ QUA text-layer. Gửi qua REST trong `_upload` (`data["parse_mode"]`). Đánh đổi:
+chậm hơn (~14.8s→33.6s/11 trang) + tốn credit. **Phải re-ingest tài liệu cũ** (xóa + upload lại) để
+chunk sạch dấu; nên chạy `rag-eval` sau re-ingest. Test: assert `_upload` gửi `parse_mode`/`language`.
+
+**Bằng chứng:** `ruff` sạch · `pytest -q` = **167 passed**. Chạy THẬT (An Hội Đông) mode vision →
+11 trang/33.6s, trang 1 đủ dấu: "ỦY BAN NHÂN DÂN", "**Số: 2056**" (đúng), "CỘNG HÒA…", "Độc lập - Tự do".
+
+## 2026-06-26 — Khắc phục lỗi 499 khi upload LlamaParse (timeout tách pha + retry)
+
+**Bối cảnh:** Upload PDF/DOCX thỉnh thoảng fail `HTTPStatusError 499` ở `/parsing/upload`. 499 = "Client
+Closed Request" (nginx): httpx phía BE đóng kết nối trước khi LlamaCloud trả xong — chủ yếu do timeout 120s
+áp chung cho cả pha *write* (đẩy file lớn/mạng chậm) hoặc sự cố proxy/mạng thoáng qua. `_upload` cũ KHÔNG
+có retry → một lần 499 là cả lần ingest fail.
+
+**Sửa (chỉ tầng parse/ingest — KHÔNG đụng retrieval/prompt/embedding → không cần RAGAS):**
+- `app/rag/parse.py`: `httpx.Timeout(connect=10, read=120, write=600, pool=10)` — pha write có ngân sách
+  riêng & rộng. Thêm `_request_with_retry(send, what)`: thử lại 429/499/5xx + lỗi transport httpx
+  (Timeout/Connect/RemoteProtocol), backoff lũy thừa + jitter; **4xx khác raise ngay**. Upload mở lại file
+  MỖI lần thử (không resume được). Bọc retry cho upload + poll + result.
+- `app/core/config.py`: thêm `llamaparse_upload_write_timeout=600`, `llamaparse_max_retries=4`,
+  `llamaparse_retry_base_delay=2.0`.
+- `tests/test_parse.py`: 3 test mới — 499→499→200 (retry thành công, mở lại file), 400 (không retry),
+  hết lượt thử → raise. Patch `time.sleep`.
+
+**Bằng chứng:** `ruff check .` sạch · `pytest -q` = **167 passed**. Chạy THẬT `parse_document` 1 PDF
+(An Hội Đông) → upload 200 → poll 200 → result 200 → **11 trang/14.8s**, dấu tiếng Việt nguyên
+("ỦY BAN NHÂN DÂN", "CỘNG HÒA…"), 12 block phân loại đúng.
+
 ## 2026-06-24 — Thay tiền xử lý PDF/DOCX bằng LlamaParse + LLM chunking trên markdown
 
 **Bối cảnh:** Bỏ pipeline trích xuất cũ (pdfplumber + OCR Vision + python-docx + xử lý font lỗi) →

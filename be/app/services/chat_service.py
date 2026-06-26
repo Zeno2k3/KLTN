@@ -83,13 +83,21 @@ async def ask(
         content=question,
     )
 
-    # Chạy pipeline RAG (chặn → thread) kèm timeout: vượt ngưỡng → 503 thân thiện thay vì
-    # treo vô hạn. Lưu ý: wait_for hủy phần CHỜ, thread nền vẫn chạy nốt (không hủy được
-    # thread) — chấp nhận được vì chỉ là không trả về cho client.
+    # Chạy pipeline RAG kèm timeout: vượt ngưỡng → 503 thân thiện thay vì treo vô hạn. Lưu ý:
+    # wait_for hủy phần CHỜ, công việc nền (thread/step) vẫn chạy nốt — chấp nhận được vì chỉ là
+    # không trả về cho client.
+    # Rẽ nhánh theo cờ: đa tác tử (workflow async-native) vs tuyến tính (sync → to_thread).
+    if settings.rag_multi_agent_enabled:
+        from app.rag.agents.workflow import answer_question_agentic
+
+        rag_coro = answer_question_agentic(question, history=history)
+    else:
+        rag_coro = asyncio.to_thread(
+            query_engine.answer_question, question, history=history
+        )
     try:
         result = await asyncio.wait_for(
-            asyncio.to_thread(query_engine.answer_question, question, history=history),
-            timeout=settings.rag_timeout_seconds,
+            rag_coro, timeout=settings.rag_timeout_seconds
         )
     except TimeoutError:
         logger.warning(

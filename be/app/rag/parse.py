@@ -19,7 +19,9 @@ Quy ước dự án:
 from __future__ import annotations
 
 import logging
+import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,6 +31,19 @@ from opentelemetry import trace
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Lỗi transport httpx coi là TẠM THỜI (thử lại được): timeout, mất kết nối, server đóng đột ngột.
+_TRANSIENT_EXC = (
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+)
+
+
+def _is_transient_status(code: int) -> bool:
+    """429 (rate limit), 499 (client closed — proxy LlamaCloud), 5xx (lỗi server) → thử lại được."""
+    return code == 429 or code == 499 or code >= 500
+
 
 # Kiểu một bảng: danh sách hàng, mỗi hàng là danh sách ô (ô rỗng = None) — khớp DocumentChunk.table_data.
 Table = list[list[str | None]]
@@ -78,7 +93,9 @@ def _to_block(item: dict) -> ParsedBlock | None:
     rows: Table | None = None
     if typ == "table" and isinstance(item.get("rows"), list):
         # "" → None để khớp kiểu Table (ô rỗng); giữ nguyên thứ tự hàng/cột.
-        rows = [[((cell or "").strip() or None) for cell in row] for row in item["rows"]]
+        rows = [
+            [((cell or "").strip() or None) for cell in row] for row in item["rows"]
+        ]
     if not md and not value and not rows:
         return None
     return ParsedBlock(
@@ -90,28 +107,75 @@ def _to_block(item: dict) -> ParsedBlock | None:
     )
 
 
+def _request_with_retry(
+    send: Callable[[], httpx.Response], what: str
+) -> httpx.Response:
+    """Gọi một request httpx, thử lại khi lỗi TẠM THỜI (429/499/5xx + lỗi transport).
+
+    ``send`` PHẢI tự thực hiện request từ đầu mỗi lần gọi (vd upload mở lại file — upload không
+    resume được). 4xx khác (400/401/413/415…) → raise NGAY (lỗi do file/khoá, retry vô ích).
+    Backoff lũy thừa + jitter (LlamaParse không trả ``Retry-After``). KHÔNG log nội dung/PII."""
+    last_exc: Exception | None = None
+    for attempt in range(settings.llamaparse_max_retries + 1):
+        try:
+            r = send()
+            r.raise_for_status()
+            return r
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            if not _is_transient_status(code):
+                raise  # 4xx không-transient → hỏng thật, không thử lại
+            last_exc = exc
+            reason = f"HTTP {code}"
+        except _TRANSIENT_EXC as exc:
+            last_exc = exc
+            reason = type(exc).__name__
+        if attempt >= settings.llamaparse_max_retries:
+            break
+        delay = settings.llamaparse_retry_base_delay * (2**attempt) + random.uniform(
+            0, 1
+        )
+        logger.warning(
+            "parse %s: lỗi tạm thời (%s), thử lại %d/%d sau %.1fs.",
+            what,
+            reason,
+            attempt + 1,
+            settings.llamaparse_max_retries,
+            delay,
+        )
+        time.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 def _upload(client: httpx.Client, path: str) -> str:
     ext = Path(path).suffix.lower()
     mime = _MIME.get(ext, "application/octet-stream")
-    with open(path, "rb") as f:
-        files = {"file": (Path(path).name, f, mime)}
-        data = {"language": settings.llamaparse_language}
-        r = client.post(
-            f"{settings.llamaparse_base_url}/upload",
-            headers=_headers(),
-            files=files,
-            data=data,
-        )
-    r.raise_for_status()
+    name = Path(path).name
+    url = f"{settings.llamaparse_base_url}/upload"
+    # parse_mode: ép vision đọc trang (bỏ qua text-layer font lỗi → giữ dấu tiếng Việt). Xem config.
+    data = {
+        "language": settings.llamaparse_language,
+        "parse_mode": settings.llamaparse_parse_mode,
+    }
+
+    def send() -> httpx.Response:
+        # Mở lại file MỖI lần thử: upload không resume → phải gửi lại từ đầu con trỏ.
+        with open(path, "rb") as f:
+            return client.post(
+                url, headers=_headers(), files={"file": (name, f, mime)}, data=data
+            )
+
+    r = _request_with_retry(send, "upload")
     return r.json()["id"]
 
 
 def _wait(client: httpx.Client, job_id: str) -> str:
     """Poll trạng thái job tới khi xong/lỗi/hết giờ. Trả status cuối (SUCCESS/PARTIAL_SUCCESS)."""
     deadline = time.monotonic() + settings.llamaparse_max_wait_seconds
+    url = f"{settings.llamaparse_base_url}/job/{job_id}"
     while True:
-        r = client.get(f"{settings.llamaparse_base_url}/job/{job_id}", headers=_headers())
-        r.raise_for_status()
+        r = _request_with_retry(lambda: client.get(url, headers=_headers()), "poll")
         status = r.json().get("status")
         if status in _DONE:
             return status
@@ -125,10 +189,8 @@ def _wait(client: httpx.Client, job_id: str) -> str:
 
 
 def _fetch_pages(client: httpx.Client, job_id: str) -> list[ParsedPage]:
-    r = client.get(
-        f"{settings.llamaparse_base_url}/job/{job_id}/result/json", headers=_headers()
-    )
-    r.raise_for_status()
+    url = f"{settings.llamaparse_base_url}/job/{job_id}/result/json"
+    r = _request_with_retry(lambda: client.get(url, headers=_headers()), "result")
     raw_pages = r.json().get("pages", []) or []
     pages: list[ParsedPage] = []
     for i, p in enumerate(raw_pages):
@@ -143,6 +205,7 @@ def _fetch_pages(client: httpx.Client, job_id: str) -> list[ParsedPage]:
             )
         )
     return pages
+
 
 # Kết quả trả về
 # {
@@ -177,7 +240,15 @@ def parse_document(path: str) -> list[ParsedPage]:
 
     tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span("rag.ingest.parse") as span:
-        with httpx.Client(timeout=settings.llamaparse_http_timeout) as client:
+        # Pha WRITE (đẩy file) có ngân sách RIÊNG & rộng — tránh httpx tự ngắt khi upload file lớn
+        # (→ LlamaCloud trả 499). connect/read/pool theo timeout chung.
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=settings.llamaparse_http_timeout,
+            write=settings.llamaparse_upload_write_timeout,
+            pool=10.0,
+        )
+        with httpx.Client(timeout=timeout) as client:
             job_id = _upload(client, path)
             span.set_attribute("rag.ingest.parse.job_id", job_id)
             status = _wait(client, job_id)
@@ -188,5 +259,7 @@ def parse_document(path: str) -> list[ParsedPage]:
 
         span.set_attribute("rag.ingest.parse.pages", len(pages))
         span.set_attribute("rag.ingest.parse.status", status)
-        logger.info("parse: job %s xong (%s trang, status=%s).", job_id, len(pages), status)
+        logger.info(
+            "parse: job %s xong (%s trang, status=%s).", job_id, len(pages), status
+        )
         return pages

@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.api.deps as deps_mod
 import app.services.auth_service as svc_mod
+from app.core.config import settings
 from app.core.database import Base, get_db
 from app.core.security import create_access_token
 from app.main import app
@@ -23,6 +24,16 @@ from app.models.document import Document, DocumentChunk
 from app.models.message import Message
 from app.models.role import Role
 from app.models.user import User
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_rag_flags(monkeypatch):
+    """Cô lập test khỏi ``.env`` của máy dev: pipeline RAG mặc định TUYẾN TÍNH (cờ đa tác tử TẮT).
+
+    Khi dev bật ``RAG_MULTI_AGENT_ENABLED=true`` trong ``.env``, ``chat_service.ask`` sẽ rẽ sang
+    ``answer_question_agentic`` (gọi OpenAI thật) — làm hỏng các test mock đường tuyến tính. Pin về
+    False để suite xác định; test nào cần nhánh đa tác tử tự bật lại trong thân test."""
+    monkeypatch.setattr(settings, "rag_multi_agent_enabled", False)
 
 
 @pytest_asyncio.fixture

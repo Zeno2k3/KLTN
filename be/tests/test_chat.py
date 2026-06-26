@@ -52,6 +52,44 @@ async def test_service_persists_user_and_assistant_messages(conv_session, monkey
 
 
 @pytest.mark.asyncio
+async def test_service_uses_multi_agent_path_when_flag_enabled(
+    conv_session, monkeypatch
+):
+    """Cờ ``rag_multi_agent_enabled=True`` → service gọi ``answer_question_agentic`` (đường đa tác
+    tử), KHÔNG gọi ``answer_question`` (tuyến tính); vẫn lưu answer + sources + trace như thường."""
+    session, user_id = conv_session
+    import app.rag.agents.workflow as agent_wf
+
+    monkeypatch.setattr(chat_service.settings, "rag_multi_agent_enabled", True)
+
+    def _linear_boom(*a, **k):
+        raise AssertionError("không được dùng answer_question khi cờ đa tác tử bật")
+
+    monkeypatch.setattr(chat_service.query_engine, "answer_question", _linear_boom)
+
+    async def _fake_agentic(question, history=None, filters=None):
+        return query_engine.AnswerResult(
+            answer="Trả lời đa tác tử [1].",
+            sources=[{"index": 1, "document_id": 2, "filename": "ben-cat.pdf"}],
+            trace_id="agentic-trace",
+        )
+
+    monkeypatch.setattr(agent_wf, "answer_question_agentic", _fake_agentic)
+
+    outcome = await chat_service.ask(
+        session, user_id=user_id, question="Hồ sơ và độ tuổi lớp 1?"
+    )
+
+    assert outcome.answer == "Trả lời đa tác tử [1]."
+    msgs = await conversation_repository.list_messages(session, outcome.conversation_id)
+    assert msgs[1].content == "Trả lời đa tác tử [1]."
+    assert msgs[1].trace_id == "agentic-trace"
+    assert msgs[1].context_sources == [
+        {"index": 1, "document_id": 2, "filename": "ben-cat.pdf"}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_service_passes_pruned_history_to_engine(conv_session, monkeypatch):
     """Service truyền lịch sử (sliding window) vào engine, KHÔNG gồm câu hỏi hiện tại.
 

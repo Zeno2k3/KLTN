@@ -37,6 +37,7 @@ def hybrid_retrieve(
     query_text: str,
     top_k: int | None = None,
     filters: MetadataFilters | None = None,
+    alpha: float | None = None,
 ) -> list[NodeWithScore]:
     """Truy hồi top-k chunk bằng hybrid search + RRF.
 
@@ -44,10 +45,13 @@ def hybrid_retrieve(
         query_text: câu hỏi của người dùng.
         top_k: số ứng viên trả về (mặc định ``settings.retrieval_top_k`` = 30).
         filters: ``MetadataFilters`` LlamaIndex; Weaviate áp cho cả nhánh keyword lẫn vector.
+        alpha: trọng số hybrid (1.0 thuần vector, 0.0 thuần keyword). ``None`` → dùng
+            ``settings.hybrid_alpha``. Cho phép eval quét alpha mà không đổi config toàn cục.
 
     Trả về danh sách ``NodeWithScore`` đã hợp nhất, điểm là điểm hybrid của Weaviate.
     """
     limit = top_k or settings.retrieval_top_k
+    effective_alpha = alpha if alpha is not None else settings.hybrid_alpha
     with weaviate_client() as client:
         index = VectorStoreIndex.from_vector_store(
             vector_store=_vector_store(client),
@@ -55,7 +59,7 @@ def hybrid_retrieve(
         )
         retriever = index.as_retriever(
             vector_store_query_mode=VectorStoreQueryMode.HYBRID,
-            alpha=settings.hybrid_alpha,
+            alpha=effective_alpha,
             similarity_top_k=limit,
             filters=filters,
             vector_store_kwargs={

@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     openai_embed_model: str = "text-embedding-3-small"
     openai_chat_model: str = "gpt-4o-mini"
 
+    # Gemini — CHỈ dùng cho lớp giám khảo ĐỐI CHỨNG trong eval retrieval (provider độc lập với OpenAI
+    # embedder/synthesizer → tránh thiên vị cùng nhà). Gọi REST httpx; KHÔNG nằm trong đường RAG production.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+
     # Weaviate Cloud (vector store)
     weaviate_url: str = ""
     weaviate_api_key: str = ""
@@ -64,9 +70,26 @@ class Settings(BaseSettings):
     llama_cloud_api_key: str = ""
     llamaparse_base_url: str = "https://api.cloud.llamaindex.ai/api/v1/parsing"
     llamaparse_language: str = "vi"  # ngôn ngữ OCR/parse
+    # Chế độ parse. Mặc định "parse_page_with_lvm": render mỗi trang → Large Vision Model đọc, BỎ QUA
+    # text-layer nhúng. Cần thiết cho văn bản hành chính VN hay bị font ToUnicode lỗi → text-layer
+    # mất dấu phụ ("Độc lập"→"Đc lp"); mode mặc định "parse_page_with_llm" ưu tiên text-layer nên kế
+    # thừa nguyên lỗi. Đổi sang "parse_page_with_llm" (rẻ/nhanh hơn) nếu nguồn không lỗi font.
+    llamaparse_parse_mode: str = "parse_page_with_lvm"
     llamaparse_poll_interval: float = 3.0  # giây giữa các lần poll trạng thái job
-    llamaparse_max_wait_seconds: float = 180.0  # trần chờ job hoàn tất (vượt → ingest failed)
-    llamaparse_http_timeout: float = 120.0  # timeout mỗi request httpx (upload/poll/result)
+    llamaparse_max_wait_seconds: float = (
+        180.0  # trần chờ job hoàn tất (vượt → ingest failed)
+    )
+    llamaparse_http_timeout: float = (
+        120.0  # timeout read/connect mỗi request httpx (poll/result)
+    )
+    # Pha WRITE (đẩy file) cần ngân sách riêng & rộng: upload không resume được, file lớn/mạng chậm
+    # vượt timeout chung → httpx ngắt kết nối → LlamaCloud trả 499 (Client Closed Request).
+    llamaparse_upload_write_timeout: float = 600.0  # timeout pha write khi upload file
+    # Retry lỗi transient (429/5xx/499 + lỗi mạng): backoff lũy thừa + jitter (LlamaParse không trả Retry-After).
+    llamaparse_max_retries: int = 4  # số lần thử lại tối đa cho một request transient
+    llamaparse_retry_base_delay: float = (
+        2.0  # cơ số backoff (giây): chờ ~ base·2^n + jitter
+    )
 
     # Chunking — LLM chunker trên markdown LlamaParse (xem app/rag/md_chunker.py).
     # Block = item LlamaParse (heading/text/table). LLM GỘP block liền kề + sinh context; code ghép
@@ -75,7 +98,9 @@ class Settings(BaseSettings):
     chunk_overlap: int = 64
     # LLM chunker: model RIÊNG (rỗng → fallback openai_chat_model). KHÔNG dùng singleton LLM chung.
     chunker_model: str = ""
-    chunk_llm_enabled: bool = True  # tắt → fallback gộp block theo kích thước (xác định, không gọi LLM)
+    chunk_llm_enabled: bool = (
+        True  # tắt → fallback gộp block theo kích thước (xác định, không gọi LLM)
+    )
     # Region (batch block) <= ngưỡng token này → emit fallback, KHÔNG gọi LLM (tiết kiệm token).
     chunk_llm_min_tokens: int = 400
     # Trần token mỗi batch block gửi LLM (chặn prompt quá to với tài liệu dài).
@@ -145,6 +170,28 @@ class Settings(BaseSettings):
     # LLM RIÊNG cho bước verify (rỗng → fallback openai_chat_model). KHÔNG dùng singleton LLM chung.
     # Một call structured-output làm cả attribution (gán nguồn + verbatim quote) lẫn judge.
     verifier_model: str = ""
+
+    # ── Pipeline ĐA TÁC TỬ (event-driven multi-agent, app/rag/agents/) ──────────────────────────
+    # Cờ TỔNG: True → request đi qua RAGAgentWorkflow (Planner phân rã → nhiều Retrieval agent chạy
+    # song song → Synthesis gộp đa nguồn → Critic phản biện + vòng viết lại). False → giữ nguyên
+    # pipeline tuyến tính answer_question() (baseline để A/B bằng RAGAS). Mặc định tắt: rollout an
+    # toàn, đường cũ không đổi hành vi.
+    rag_multi_agent_enabled: bool = False
+    # Planner: tách câu hỏi phức (nhiều ý / nhiều phường) thành ≤ planner_max_subqueries sub-query
+    # độc lập rồi retrieve riêng từng cái. Tắt → dùng nguyên câu (sau condense) làm 1 sub-query.
+    planner_enabled: bool = True
+    planner_model: str = ""  # rỗng → fallback openai_chat_model (per-step, KHÔNG singleton chung)
+    planner_max_subqueries: int = 3
+    # Retrieval agent tự-chấm: LLM chấm ngữ cảnh đã đủ trả lời sub-query chưa; thiếu → tự viết lại
+    # truy vấn và retrieve lại (tối đa retrieval_max_rounds vòng/sub-query). Tắt → retrieve 1 vòng.
+    retrieval_grade_enabled: bool = True
+    retrieval_grader_model: str = ""  # rỗng → fallback openai_chat_model
+    retrieval_max_rounds: int = 2  # tổng số vòng retrieve mỗi sub-query (gồm vòng đầu)
+    # Critic: tái dùng logic citation_verifier để phản biện bản nháp; nếu phải DROP câu (thiếu nguồn
+    # / sai phạm vi) và còn hạn mức → gửi feedback về Synthesis viết lại (≤ critic_max_revisions lần).
+    # Critic LUÔN chạy trong đường đa tác tử (không phụ thuộc citation_verify_enabled).
+    critic_model: str = ""  # rỗng → fallback verifier_model → openai_chat_model
+    critic_max_revisions: int = 1
 
     # Arize Phoenix (tracing LLM/embedding qua OTEL). Tắt → không khởi tạo tracing.
     phoenix_enabled: bool = True

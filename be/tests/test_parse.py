@@ -3,6 +3,7 @@
 Đường THÀNH CÔNG (gọi REST LlamaParse) được nghiệm thu bằng chạy THẬT (xem PROGRESS/skill rag-eval);
 ở đây chỉ test: chuẩn hóa item (hàm thuần), map kết quả, và các nhánh lỗi/thiếu-key (không-mạng)."""
 
+import httpx
 import pytest
 
 from app.rag import parse
@@ -18,7 +19,9 @@ def test_to_block_text():
 
 
 def test_to_block_heading_keeps_level():
-    b = parse._to_block({"type": "heading", "md": "# Điều 5", "value": "Điều 5", "lvl": 2})
+    b = parse._to_block(
+        {"type": "heading", "md": "# Điều 5", "value": "Điều 5", "lvl": 2}
+    )
     assert b.type == "heading"
     assert b.level == 2
     assert b.value == "Điều 5"
@@ -100,3 +103,61 @@ def test_parse_document_success(monkeypatch):
     monkeypatch.setattr(parse, "_wait", lambda c, j: "SUCCESS")
     monkeypatch.setattr(parse, "_fetch_pages", lambda c, j: pages)
     assert parse.parse_document("x.pdf") == pages
+
+
+# --- _request_with_retry: lỗi transient (499/5xx) thử lại; 4xx khác fail ngay ---
+def _resp(code: int, body: dict | None = None) -> httpx.Response:
+    """httpx.Response thật: raise_for_status() ném HTTPStatusError đúng cho 4xx/5xx (gồm 499)."""
+    req = httpx.Request("POST", "https://api.cloud.llamaindex.ai/api/v1/parsing/upload")
+    return httpx.Response(code, json=(body or {}), request=req)
+
+
+class _UploadClient:
+    """Client giả: trả lần lượt các status code; đọc file mỗi lần để bắt lỗi handle đã đóng."""
+
+    def __init__(self, statuses: list[int]):
+        self._statuses = list(statuses)
+        self.post_calls = 0
+        self.last_data: dict | None = None
+
+    def post(self, url, headers=None, files=None, data=None):
+        self.post_calls += 1
+        self.last_data = data  # giữ form fields để assert parse_mode/language
+        files["file"][
+            1
+        ].read()  # nếu file không được mở lại mỗi lần → đọc rỗng (proxy lỗi resume)
+        return _resp(self._statuses.pop(0), {"id": "job-xyz"})
+
+
+def test_upload_retries_on_499_then_succeeds(tmp_path, monkeypatch):
+    monkeypatch.setattr(parse.time, "sleep", lambda *_: None)  # không chờ backoff thật
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-1.7 noi dung")
+    client = _UploadClient([499, 499, 200])  # hai lần 499 rồi 200
+    job_id = parse._upload(client, str(f))
+    assert job_id == "job-xyz"
+    assert client.post_calls == 3  # đã thử lại đúng 3 lần (mở lại file mỗi lần)
+    # parse_mode gửi lên đúng để ép vision (bỏ text-layer font lỗi → giữ dấu).
+    assert client.last_data["parse_mode"] == parse.settings.llamaparse_parse_mode
+    assert client.last_data["language"] == parse.settings.llamaparse_language
+
+
+def test_upload_no_retry_on_400(tmp_path, monkeypatch):
+    monkeypatch.setattr(parse.time, "sleep", lambda *_: None)
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-1.7 noi dung")
+    client = _UploadClient([400])  # 4xx không-transient → raise NGAY
+    with pytest.raises(httpx.HTTPStatusError):
+        parse._upload(client, str(f))
+    assert client.post_calls == 1  # KHÔNG thử lại
+
+
+def test_upload_exhausts_retries_then_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(parse.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(parse.settings, "llamaparse_max_retries", 2)
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-1.7 noi dung")
+    client = _UploadClient([499, 499, 499])  # luôn 499 → hết lượt thử → raise
+    with pytest.raises(httpx.HTTPStatusError):
+        parse._upload(client, str(f))
+    assert client.post_calls == 3  # 1 lần đầu + 2 lần thử lại
